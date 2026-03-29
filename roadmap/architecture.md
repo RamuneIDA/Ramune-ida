@@ -722,13 +722,13 @@ WorkerHandle (每个 Worker 子进程一个)
 
 ## 九、MCP Transport 支持
 
-| Transport | 优先级 | 场景 |
-|-----------|--------|------|
-| **stdio** | P0（首版必须） | Claude Desktop、Cursor 等本地 MCP 客户端 |
-| **Streamable HTTP** | P1 | 远程部署、容器化、多客户端共享 |
-| SSE | 不做 | 被 Streamable HTTP 取代 |
+| Transport | 支持 | 场景 |
+|-----------|------|------|
+| **Streamable HTTP** | 是（默认） | 本地 / 远程 / 容器化 / 多客户端 |
+| **SSE** | 是（兼容） | 旧版 MCP 客户端 |
+| stdio | 不支持 | 文件上传/下载依赖 HTTP 端点，stdio 无法提供 |
 
-stdio 模式下 MCP Server 自身通过 stdin/stdout 与 MCP Client 通信，与 Worker 的 pipe 是独立的（Worker 通过 `subprocess.Popen` 的 pipe 通信，不占用 MCP Server 的 stdio）。
+Server 和 Client 不共享文件系统。二进制文件和 IDB 通过 HTTP 端点 `/files/{project_id}/` 上传/下载，这要求 HTTP transport。
 
 ---
 

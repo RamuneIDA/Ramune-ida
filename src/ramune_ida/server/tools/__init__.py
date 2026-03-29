@@ -4,7 +4,7 @@ Open this file to see all available tools at a glance: name,
 description, and which module implements it.
 
 Implementation functions live in sibling modules (session.py,
-analysis.py, …).  This file only handles **registration**.
+analysis.py, ...).  This file only handles **registration**.
 
 Adding a new tool
 -----------------
@@ -20,55 +20,36 @@ from ramune_ida.server.tools import session
 # ── Project lifecycle ─────────────────────────────────────────────
 
 register_tool(
-    description=(
-        "Open a binary for analysis. Spawns an IDA worker and begins "
-        "auto-analysis immediately — the first open may take minutes "
-        "for large binaries.\n\n"
-        "Returns the assigned project_id. If analysis is still running "
-        "when the call returns, a task_id is included for polling."
-    ),
+    description="Create a new project workspace. Returns project_id and work_dir.",
 )(session.open_project)
 
 register_tool(
-    description=(
-        "Destroy a project completely: gracefully close the database "
-        "(save + exit), then remove the project from server state and "
-        "clean up the work directory.  Use this when you are done "
-        "analysing a binary."
-    ),
+    description="Destroy a project and clean up its work directory.",
 )(session.close_project)
 
-# ── Worker instance management ────────────────────────────────────
+register_tool(
+    description="List all open projects and their status.",
+)(session.projects)
+
+# ── Database lifecycle ────────────────────────────────────────────
+
+register_tool(
+    description="Open a binary or IDB in the project. Path is relative to work_dir.",
+)(session.open_database)
 
 register_tool(
     description=(
-        "Close the IDA worker instance for a project (save + exit).  "
-        "The project stays alive — the next analysis command will "
-        "automatically respawn a fresh worker.  Use this to free "
-        "resources when you don't need a project actively running."
+        "Close the database and terminate the IDA process. "
+        "The project stays alive. Set force=true to kill without saving."
     ),
 )(session.close_database)
 
-register_tool(
-    description=(
-        "Forcefully kill the IDA worker process.  No saving, no "
-        "graceful shutdown.  Use when IDA is stuck or unresponsive.  "
-        "The project stays alive and the next command will spawn a "
-        "fresh worker."
-    ),
-)(session.force_close)
-
-# ── Navigation ────────────────────────────────────────────────────
+# ── Async tasks ───────────────────────────────────────────────────
 
 register_tool(
-    description="Switch the default project pointer to a different project.",
-)(session.switch_default)
-
-# ── Async task polling ────────────────────────────────────────────
-
-register_tool(
-    description=(
-        "Poll the result of a long-running task that timed out.  "
-        "Returns the task status and result/error if completed."
-    ),
+    description="Poll the result of a long-running task.",
 )(session.get_task_result)
+
+register_tool(
+    description="Cancel a running or queued task.",
+)(session.cancel_task)

@@ -60,7 +60,25 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[dict]:
 
 # FastMCP instance -----------------------------------------------------------
 
-mcp = FastMCP("ramune-ida", lifespan=_lifespan)
+INSTRUCTIONS = """\
+Ramune-ida — headless IDA Pro for AI reverse engineering.
+
+Concepts:
+- project: a workspace with its own directory. Created by open_project().
+- database: an IDA database opened inside a project via open_database().
+- project_id: returned by open_project(), required by all other tools.
+
+File transfer: server and client do not share a filesystem.
+Upload via POST /files/{project_id}, download via GET /files/{project_id}/{filename}.
+open_database path is relative to work_dir — just use the filename you uploaded.
+
+Workflow: open_project → upload binary → open_database → analyze → close_database → close_project.
+
+Long-running operations return a task_id when they time out. Poll with get_task_result.
+If a tool cannot handle your request, use execute_python to run arbitrary IDAPython.
+"""
+
+mcp = FastMCP("ramune-ida", instructions=INSTRUCTIONS, lifespan=_lifespan)
 
 
 # Auto-truncating tool decorator --------------------------------------------

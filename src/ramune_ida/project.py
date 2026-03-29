@@ -1,4 +1,8 @@
-"""Project — a work context bound to one IDB file.
+"""Project — a work context for reverse engineering.
+
+A Project is a workspace (work_dir + project_id).  It may or may not
+have a database (IDB) open.  Call ``set_database(path)`` before the
+first ``execute()`` to bind a binary/IDB.
 
 Owns a WorkerHandle (1:1). Each task is an asyncio.Task
 serialized through an execution lock.
@@ -9,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import os
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -145,26 +150,52 @@ class Project:
     def __init__(
         self,
         project_id: str,
-        exe_path: str,
-        idb_path: str,
         work_dir: str,
         limiter: Limiter,
         worker_python: str = "python",
     ) -> None:
         self.project_id = project_id
-        self.exe_path = exe_path
-        self.idb_path = idb_path
         self.work_dir = work_dir
         self._limiter = limiter
         self._worker_python = worker_python
+
+        self.exe_path: str | None = None
+        self.idb_path: str | None = None
 
         self.last_accessed: float = 0.0
         self._handle: WorkerHandle | None = None
         self._exec_lock = asyncio.Lock()
         self._tasks: dict[str, Task] = {}
 
+    def set_database(self, path: str) -> None:
+        """Bind a binary or IDB to this project.
+
+        If *path* is an IDB (.i64/.idb), open it directly.
+        Otherwise treat it as a binary — IDA creates a new IDB from it.
+        """
+        if path.lower().endswith((".i64", ".idb")):
+            self.idb_path = path
+            self.exe_path = None
+        else:
+            self.exe_path = path
+            self.idb_path = os.path.splitext(path)[0] + ".i64"
+
+    @property
+    def has_database(self) -> bool:
+        return self.idb_path is not None or self.exe_path is not None
+
+    @property
+    def open_path(self) -> str | None:
+        """Path to pass to idapro.open_database().
+
+        Prefers an existing IDB; falls back to the binary.
+        """
+        if self.idb_path and os.path.isfile(self.idb_path):
+            return self.idb_path
+        return self.exe_path
+
     def __repr__(self) -> str:
-        return f"Project(id={self.project_id!r}, idb={self.idb_path!r})"
+        return f"Project(id={self.project_id!r}, exe={self.exe_path!r}, idb={self.idb_path!r})"
 
     @property
     def has_active_tasks(self) -> bool:
@@ -275,13 +306,17 @@ class Project:
             self._handle.kill()
             self._handle = None
             self._limiter.on_destroyed(self.project_id)
+        if self.open_path is None:
+            raise RuntimeError(
+                "No database opened — call open_database first"
+            )
         if not self._limiter.can_spawn:
             raise RuntimeError("no instance available")
         handle = WorkerHandle(python_path=self._worker_python)
-        await handle.spawn()
+        await handle.spawn(cwd=self.work_dir)
         self._limiter.on_spawned(self.project_id)
         try:
-            req = OpenDatabase(path=self.exe_path).to_request("__open__")
+            req = OpenDatabase(path=self.open_path).to_request("__open__")
             resp = await handle.execute(req)
             if resp.error:
                 raise RuntimeError(

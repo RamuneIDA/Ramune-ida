@@ -50,7 +50,7 @@ class WorkerHandle:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def spawn(self) -> None:
+    async def spawn(self, cwd: str | None = None) -> None:
         """Start a Worker subprocess and wait for its ready message."""
         self.instance_id = f"w-{next(_instance_counter):04d}"
 
@@ -64,6 +64,7 @@ class WorkerHandle:
             self._proc = subprocess.Popen(
                 [self._python_path, "-m", "ramune_ida.worker.main"],
                 env=env,
+                cwd=cwd,
                 pass_fds=(child_fd,),
             )
         except Exception:

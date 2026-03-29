@@ -15,6 +15,10 @@ class Limiter:
         soft_limit: int = 4,
         hard_limit: int = 8,
     ) -> None:
+        if hard_limit and soft_limit > hard_limit:
+            raise ValueError(
+                f"soft_limit ({soft_limit}) must be <= hard_limit ({hard_limit})"
+            )
         self._soft_limit = soft_limit
         self._hard_limit = hard_limit
         self._active: set[str] = set()

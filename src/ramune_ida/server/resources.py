@@ -21,9 +21,8 @@ from ramune_ida.server.app import mcp, get_state
 @mcp.resource(
     "projects://overview",
     description=(
-        "All open projects at a glance: IDs, default pointer, worker "
-        "state, active task counts, and instance limits.  Read this "
-        "instead of calling a tool to check project status."
+        "All open projects at a glance: IDs, worker state, active task "
+        "counts, and instance limits."
     ),
 )
 def projects_overview() -> str:
@@ -33,12 +32,12 @@ def projects_overview() -> str:
         projects.append({
             "project_id": pid,
             "has_worker": project._handle is not None,
+            "has_database": project.has_database,
             "active_tasks": len(project._tasks),
         })
 
     limiter = state.limiter
     return json.dumps({
-        "default_project_id": state.default_project_id,
         "projects": projects,
         "instance_count": limiter.instance_count,
         "soft_limit": limiter._soft_limit,
@@ -52,10 +51,7 @@ def projects_overview() -> str:
 
 @mcp.resource(
     "project://{project_id}/status",
-    description=(
-        "Detailed project status: paths, worker state, active tasks, "
-        "output count, and whether it is the default project."
-    ),
+    description="Detailed project status: paths, worker state, active tasks.",
 )
 def project_status(project_id: str) -> str:
     state = get_state()
@@ -65,8 +61,6 @@ def project_status(project_id: str) -> str:
 
     tasks = [t.to_dict() for t in project._tasks.values()]
 
-    output_count = len(state.output_store.list_outputs(project_id))
-
     idle = round(time.monotonic() - project.last_accessed, 1) if project.last_accessed > 0 else None
 
     return json.dumps({
@@ -74,11 +68,10 @@ def project_status(project_id: str) -> str:
         "exe_path": project.exe_path,
         "idb_path": project.idb_path,
         "work_dir": project.work_dir,
-        "is_default": state.default_project_id == project_id,
         "has_worker": project._handle is not None,
         "idle_seconds": idle,
         "tasks": tasks,
-        "output_count": output_count,
+        "output_count": len(state.output_store.list_outputs(project_id)),
     })
 
 
@@ -88,9 +81,7 @@ def project_status(project_id: str) -> str:
 @mcp.resource(
     "project://{project_id}/files",
     description=(
-        "Complete file listing for a project: work_dir contents with "
-        "sizes and HTTP download URLs.  This is the single entry point "
-        "for discovering all downloadable files in a project."
+        "File listing for a project work_dir with sizes and download URLs."
     ),
 )
 def project_files(project_id: str) -> str:
@@ -128,10 +119,7 @@ def project_files(project_id: str) -> str:
 
 @mcp.resource(
     "outputs://{project_id}",
-    description=(
-        "Truncated output listing for a project with download URLs. "
-        "Only outputs that were truncated by the server appear here."
-    ),
+    description="Truncated output listing with download URLs.",
 )
 def project_outputs(project_id: str) -> str:
     state = get_state()
@@ -156,35 +144,4 @@ def project_outputs(project_id: str) -> str:
         "project_id": project_id,
         "count": len(outputs),
         "outputs": outputs,
-    })
-
-
-# ── Staging area ──────────────────────────────────────────────────
-
-
-@mcp.resource(
-    "files://staging",
-    description=(
-        "Files in the staging area (uploaded but not yet opened as a project). "
-        "Use the path value with open_project to start analysis."
-    ),
-)
-def staging_files() -> str:
-    state = get_state()
-    staging_dir = os.path.join(
-        state.config.resolved_work_base_dir, "_staging"
-    )
-    files = []
-    if os.path.isdir(staging_dir):
-        for entry in os.scandir(staging_dir):
-            if entry.is_file():
-                files.append({
-                    "name": entry.name,
-                    "path": entry.path,
-                    "size": entry.stat().st_size,
-                    "download_url": f"/files/{entry.name}",
-                })
-    return json.dumps({
-        "staging_dir": staging_dir,
-        "files": files,
     })
