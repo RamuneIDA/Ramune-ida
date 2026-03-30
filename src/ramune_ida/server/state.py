@@ -66,6 +66,7 @@ class AppState:
                 work_dir=entry.path,
                 limiter=self.limiter,
                 worker_python=self.config.worker_python,
+                plugin_dir=self.config.resolved_plugin_dir,
             )
             self.projects[project_id] = project
             log.info("Recovered project %s", project_id)
@@ -111,6 +112,7 @@ class AppState:
             work_dir=work_dir,
             limiter=self.limiter,
             worker_python=self.config.worker_python,
+            plugin_dir=self.config.resolved_plugin_dir,
         )
         self.projects[project_id] = project
         log.info("Opened project %s", project_id)

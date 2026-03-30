@@ -1,8 +1,17 @@
-"""Command dispatch: routes Method → handler function.
+"""Command dispatch: routes requests → handler functions.
 
-Installs ``sys.setprofile`` around every handler call so that
-a cancellation flag (set via SIGUSR1) is checked at Python
-function-call boundaries.
+Two dispatch tracks:
+
+1. **Command track** — built-in lifecycle / legacy commands registered via
+   ``@handler(Method.XXX)``.  The request is deserialised into a typed
+   :class:`~ramune_ida.commands.Command` and passed to the handler.
+
+2. **Plugin track** — plugin-style tools registered via
+   ``register_plugins()``.  The IPC method uses a ``plugin:`` prefix
+   (e.g. ``plugin:disasm``).  The handler receives raw ``params: dict``.
+
+Both tracks share the same cancellation / error-handling wrapper
+(``sys.setprofile`` + ``CancelledError``).
 """
 
 from __future__ import annotations
@@ -11,12 +20,17 @@ import sys
 from typing import Any, Callable
 
 from ramune_ida.commands import Command, command_from_params
+from ramune_ida.core import ToolError
 from ramune_ida.protocol import ErrorCode, Method, Request, Response
 from ramune_ida.worker import cancel
 
 Handler = Callable[[Command], Any]
+PluginHandler = Callable[[dict[str, Any]], Any]
 
 _HANDLERS: dict[Method, Handler] = {}
+_PLUGIN_HANDLERS: dict[str, PluginHandler] = {}
+
+PLUGIN_PREFIX = "plugin:"
 
 
 def handler(method: Method) -> Callable[[Handler], Handler]:
@@ -27,6 +41,11 @@ def handler(method: Method) -> Callable[[Handler], Handler]:
     return decorator
 
 
+def register_plugins(handler_map: dict[str, Callable]) -> None:
+    """Bulk-register plugin-style handlers (called once at startup)."""
+    _PLUGIN_HANDLERS.update(handler_map)
+
+
 def _cancel_profile(frame: Any, event: str, arg: Any) -> None:
     """setprofile callback — raise on function call/return if cancelled."""
     if cancel.is_requested():
@@ -34,36 +53,45 @@ def _cancel_profile(frame: Any, event: str, arg: Any) -> None:
 
 
 def dispatch(request: Request) -> Response:
-    """Look up the handler for *request.method* and call it."""
+    """Route *request* to the appropriate handler and return the response."""
     cancel.reset()
-    try:
-        cmd = command_from_params(request.method, request.params)
-    except ValueError:
-        return Response.fail(
-            request.id,
-            ErrorCode.METHOD_NOT_FOUND,
-            f"Unknown method: {request.method}",
-        )
 
-    fn = _HANDLERS.get(cmd.method)
-    if fn is None:
-        return Response.fail(
-            request.id,
-            ErrorCode.METHOD_NOT_FOUND,
-            f"No handler for method: {request.method}",
-        )
+    if request.method.startswith(PLUGIN_PREFIX):
+        tool_name = request.method[len(PLUGIN_PREFIX):]
+        fn = _PLUGIN_HANDLERS.get(tool_name)
+        if fn is None:
+            return Response.fail(
+                request.id, ErrorCode.METHOD_NOT_FOUND,
+                f"No plugin handler: {tool_name}",
+            )
+        invoker: Callable[[], Any] = lambda: fn(request.params or {})
+    else:
+        try:
+            cmd = command_from_params(request.method, request.params)
+        except ValueError:
+            return Response.fail(
+                request.id, ErrorCode.METHOD_NOT_FOUND,
+                f"Unknown method: {request.method}",
+            )
+        fn_cmd = _HANDLERS.get(cmd.method)
+        if fn_cmd is None:
+            return Response.fail(
+                request.id, ErrorCode.METHOD_NOT_FOUND,
+                f"No handler for method: {request.method}",
+            )
+        invoker = lambda: fn_cmd(cmd)  # noqa: E731
+
     try:
         sys.setprofile(_cancel_profile)
-        result = fn(cmd)
+        result = invoker()
         return Response.ok(request.id, result)
     except CancelledError:
         return Response.fail(request.id, ErrorCode.CANCELLED, "Task cancelled")
-    except HandlerError as exc:
+    except (HandlerError, ToolError) as exc:
         return Response.fail(request.id, exc.code, str(exc))
     except Exception as exc:
         return Response.fail(
-            request.id,
-            ErrorCode.INTERNAL_ERROR,
+            request.id, ErrorCode.INTERNAL_ERROR,
             f"{type(exc).__name__}: {exc}",
         )
     finally:

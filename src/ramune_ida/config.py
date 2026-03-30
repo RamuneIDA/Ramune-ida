@@ -16,7 +16,14 @@ class ServerConfig(BaseModel):
     output_max_length: int = 20_000
     output_preview_length: int = 3_000
     output_max_per_project: int = 100
+    plugins_enabled: bool = True
+    plugin_dir: str = "~/.ramune-ida/plugins"
 
     @property
     def resolved_work_base_dir(self) -> str:
         return os.path.expanduser(self.work_base_dir)
+
+    @property
+    def resolved_plugin_dir(self) -> str | None:
+        path = os.path.expanduser(self.plugin_dir)
+        return path if os.path.isdir(path) else None

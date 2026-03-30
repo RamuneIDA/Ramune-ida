@@ -1,12 +1,18 @@
-"""Handlers for analysis operations (decompile, disasm, xrefs, etc.)."""
+"""Worker-side handlers for analysis tools.
+
+Each function receives ``params: dict`` and returns ``dict``.
+IDA modules are imported inside function bodies so the module
+itself can be imported safely without IDA (e.g. during --list-plugins).
+
+.. note:: Must stay compatible with Python 3.10.
+   See :mod:`ramune_ida.worker` docstring for details.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ramune_ida.commands import Decompile, Disasm
-from ramune_ida.protocol import ErrorCode, Method
-from ramune_ida.worker.dispatch import handler, HandlerError
+from ramune_ida.core import ToolError
 
 
 def _resolve_addr(func: str) -> int:
@@ -26,31 +32,32 @@ def _resolve_addr(func: str) -> int:
 
     addr = ida_name.get_name_ea(0, func)
     if addr == 0xFFFFFFFFFFFFFFFF:  # BADADDR
-        raise HandlerError(ErrorCode.FUNCTION_NOT_FOUND, f"Cannot resolve '{func}'")
+        raise ToolError(-12, "Cannot resolve '%s'" % func)
     return addr
 
 
-@handler(Method.DECOMPILE)
-def handle_decompile(cmd: Decompile) -> dict[str, Any]:
+def decompile(params: dict[str, Any]) -> dict[str, Any]:
+    """Decompile the function at *func* (name or hex address)."""
     import ida_funcs
     import ida_hexrays
 
-    if not cmd.func:
-        raise HandlerError(ErrorCode.INVALID_PARAMS, "Missing required parameter: func")
+    func_str = params.get("func", "")
+    if not func_str:
+        raise ToolError(-4, "Missing required parameter: func")
 
-    addr = _resolve_addr(cmd.func)
+    addr = _resolve_addr(func_str)
 
     func_obj = ida_funcs.get_func(addr)
     if func_obj is None:
-        raise HandlerError(ErrorCode.FUNCTION_NOT_FOUND, f"{hex(addr)} is not a function")
+        raise ToolError(-12, "%s is not a function" % hex(addr))
 
     try:
         cfunc = ida_hexrays.decompile(func_obj.start_ea)
     except ida_hexrays.DecompilationFailure as exc:
-        raise HandlerError(ErrorCode.DECOMPILE_FAILED, str(exc))
+        raise ToolError(-13, str(exc))
 
     if cfunc is None:
-        raise HandlerError(ErrorCode.DECOMPILE_FAILED, f"No result for {hex(func_obj.start_ea)}")
+        raise ToolError(-13, "No result for %s" % hex(func_obj.start_ea))
 
     return {
         "addr": hex(func_obj.start_ea),
@@ -59,19 +66,22 @@ def handle_decompile(cmd: Decompile) -> dict[str, Any]:
     }
 
 
-@handler(Method.DISASM)
-def handle_disasm(cmd: Disasm) -> dict[str, Any]:
+def disasm(params: dict[str, Any]) -> dict[str, Any]:
+    """Disassemble *count* instructions starting at *addr*."""
     import ida_ua
     import idc
 
-    if not cmd.addr:
-        raise HandlerError(ErrorCode.INVALID_PARAMS, "Missing required parameter: addr")
+    addr_str = params.get("addr", "")
+    count = params.get("count", 20)
 
-    addr = _resolve_addr(cmd.addr)
+    if not addr_str:
+        raise ToolError(-4, "Missing required parameter: addr")
+
+    addr = _resolve_addr(addr_str)
 
     lines: list[dict[str, Any]] = []
     cur = addr
-    for _ in range(cmd.count):
+    for _ in range(count):
         insn = ida_ua.insn_t()
         length = ida_ua.decode_insn(insn, cur)
         if length == 0:

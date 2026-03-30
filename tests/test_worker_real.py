@@ -152,13 +152,13 @@ def test_save_database(worker, binary):
     worker.send({"id": "3", "method": "close_database", "params": {}})
 
 
-# ── Decompile ─────────────────────────────────────────────────────
+# ── Decompile (plugin:decompile) ──────────────────────────────────
 
 
 def test_decompile_by_name(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "decompile", "params": {"func": "main"}})
+    r = worker.send({"id": "2", "method": "plugin:decompile", "params": {"func": "main"}})
     assert "error" not in r
     assert "code" in r["result"]
     assert "addr" in r["result"]
@@ -170,10 +170,10 @@ def test_decompile_by_name(worker, binary):
 def test_decompile_by_address(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "decompile", "params": {"func": "main"}})
+    r = worker.send({"id": "2", "method": "plugin:decompile", "params": {"func": "main"}})
     addr = r["result"]["addr"]
 
-    r = worker.send({"id": "3", "method": "decompile", "params": {"func": addr}})
+    r = worker.send({"id": "3", "method": "plugin:decompile", "params": {"func": addr}})
     assert "error" not in r
     assert r["result"]["addr"] == addr
 
@@ -183,7 +183,7 @@ def test_decompile_by_address(worker, binary):
 def test_decompile_missing_func(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "decompile", "params": {"func": ""}})
+    r = worker.send({"id": "2", "method": "plugin:decompile", "params": {"func": ""}})
     assert "error" in r
 
     worker.send({"id": "99", "method": "close_database", "params": {}})
@@ -192,19 +192,19 @@ def test_decompile_missing_func(worker, binary):
 def test_decompile_unknown_func(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "decompile", "params": {"func": "nonexistent_func_xyz"}})
+    r = worker.send({"id": "2", "method": "plugin:decompile", "params": {"func": "nonexistent_func_xyz"}})
     assert "error" in r
 
     worker.send({"id": "99", "method": "close_database", "params": {}})
 
 
-# ── Disasm ────────────────────────────────────────────────────────
+# ── Disasm (plugin:disasm) ────────────────────────────────────────
 
 
 def test_disasm_by_name(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "disasm", "params": {"addr": "main", "count": 5}})
+    r = worker.send({"id": "2", "method": "plugin:disasm", "params": {"addr": "main", "count": 5}})
     assert "error" not in r
     lines = r["result"]["lines"]
     assert len(lines) > 0
@@ -219,10 +219,10 @@ def test_disasm_by_name(worker, binary):
 def test_disasm_by_address(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "disasm", "params": {"addr": "main"}})
+    r = worker.send({"id": "2", "method": "plugin:disasm", "params": {"addr": "main"}})
     addr = r["result"]["start_addr"]
 
-    r = worker.send({"id": "3", "method": "disasm", "params": {"addr": addr, "count": 3}})
+    r = worker.send({"id": "3", "method": "plugin:disasm", "params": {"addr": addr, "count": 3}})
     assert "error" not in r
     assert len(r["result"]["lines"]) <= 3
 
@@ -232,7 +232,7 @@ def test_disasm_by_address(worker, binary):
 def test_disasm_missing_addr(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "disasm", "params": {"addr": ""}})
+    r = worker.send({"id": "2", "method": "plugin:disasm", "params": {"addr": ""}})
     assert "error" in r
 
     worker.send({"id": "99", "method": "close_database", "params": {}})
@@ -241,7 +241,7 @@ def test_disasm_missing_addr(worker, binary):
 def test_disasm_unknown_addr(worker, binary):
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "disasm", "params": {"addr": "nonexistent_xyz"}})
+    r = worker.send({"id": "2", "method": "plugin:disasm", "params": {"addr": "nonexistent_xyz"}})
     assert "error" in r
 
     worker.send({"id": "99", "method": "close_database", "params": {}})
@@ -254,10 +254,10 @@ def test_sequential_commands(worker, binary):
     """Verify the worker handles a realistic sequence correctly."""
     worker.send({"id": "1", "method": "open_database", "params": {"path": binary}})
 
-    r = worker.send({"id": "2", "method": "decompile", "params": {"func": "main"}})
+    r = worker.send({"id": "2", "method": "plugin:decompile", "params": {"func": "main"}})
     assert "code" in r["result"]
 
-    r = worker.send({"id": "3", "method": "disasm", "params": {"addr": "main", "count": 10}})
+    r = worker.send({"id": "3", "method": "plugin:disasm", "params": {"addr": "main", "count": 10}})
     assert len(r["result"]["lines"]) > 0
 
     r = worker.send({"id": "4", "method": "save_database", "params": {}})
@@ -273,7 +273,7 @@ def test_reopen_after_close(worker, binary):
     worker.send({"id": "2", "method": "close_database", "params": {}})
 
     worker.send({"id": "3", "method": "open_database", "params": {"path": binary}})
-    r = worker.send({"id": "4", "method": "decompile", "params": {"func": "main"}})
+    r = worker.send({"id": "4", "method": "plugin:decompile", "params": {"func": "main"}})
     assert "code" in r["result"]
 
     worker.send({"id": "99", "method": "close_database", "params": {}})

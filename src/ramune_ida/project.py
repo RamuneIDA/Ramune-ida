@@ -115,7 +115,7 @@ class Task:
     # -- Serialisation for MCP layer ----------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Standard dict representation for MCP tool responses."""
+        """Standard dict representation for polling / internal use."""
         d: dict[str, Any] = {
             "task_id": self._task_id,
             "method": self._command.method.value,
@@ -126,6 +126,25 @@ class Task:
         if self._error is not None:
             d["error"] = {"code": self._error.code, "message": self._error.message}
         return d
+
+    def to_mcp_result(self, project_id: str) -> dict[str, Any]:
+        """Flatten task into the standard MCP tool response dict.
+
+        Unlike :meth:`to_dict` (which nests ``result``), this merges
+        the worker result into the top-level dict — the format every
+        MCP tool is expected to return.
+        """
+        result: dict[str, Any] = {
+            "project_id": project_id,
+            "status": self._status.value,
+        }
+        if self._result is not None:
+            result.update(self._result)
+        if self._error is not None:
+            result["error"] = self._error.message
+        if not self.is_done:
+            result["task_id"] = self._task_id
+        return result
 
     # -- Internal (set by Project) ------------------------------------------
 
@@ -156,11 +175,13 @@ class Project:
         work_dir: str,
         limiter: Limiter,
         worker_python: str = "python",
+        plugin_dir: str | None = None,
     ) -> None:
         self.project_id = project_id
         self.work_dir = work_dir
         self._limiter = limiter
         self._worker_python = worker_python
+        self._plugin_dir = plugin_dir
 
         self.exe_path: str | None = None
         self.idb_path: str | None = None
@@ -331,7 +352,7 @@ class Project:
             )
         if not self._limiter.can_spawn:
             raise RuntimeError("no instance available")
-        handle = WorkerHandle(python_path=self._worker_python)
+        handle = WorkerHandle(python_path=self._worker_python, plugin_dir=self._plugin_dir)
         await handle.spawn(cwd=self.work_dir)
         self._limiter.on_spawned(self.project_id)
         try:

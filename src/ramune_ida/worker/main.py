@@ -1,41 +1,69 @@
 """Worker process entry point.
 
-Lifecycle:
-  1. Import idapro (must be the first import)
-  2. Import all handlers to register them
-  3. Open socket I/O on the fd passed via env var
-  4. Enter message loop: recv → dispatch → send
-  5. Exit on EOF (parent closed socket) or "shutdown" command
+Two modes of operation:
 
-stdin/stdout/stderr are NOT touched — IDA console output and
-print() work normally. The IPC uses a UNIX socketpair.
+1. **--list-plugins** (lightweight)
+   Output tool metadata JSON to stdout and exit.
+   Does NOT import ``idapro`` — safe to call from the Server's Python.
+
+2. **Normal** (default)
+   Import ``idapro``, register handlers, enter message loop.
+
+Usage::
+
+    # Server-side discovery
+    worker_python -m ramune_ida.worker.main --list-plugins
+
+    # Normal (spawned by WorkerHandle)
+    worker_python -m ramune_ida.worker.main
 """
 
 from __future__ import annotations
 
-import signal
-import traceback
-
-# Step 1: import idapro — must be first
-import idapro
-
-# Step 2: register all handlers
-import ramune_ida.worker.handlers.session  # noqa: F401
-import ramune_ida.worker.handlers.analysis  # noqa: F401
-import ramune_ida.worker.handlers.python  # noqa: F401
-
-from ramune_ida.worker import cancel
-from ramune_ida.worker.socket_io import SocketIO
-from ramune_ida.worker.dispatch import dispatch
-from ramune_ida.commands import Ping, Shutdown
-from ramune_ida.protocol import Method, Response
+import sys
 
 
-def main() -> None:
+def _list_plugins() -> None:
+    """Dump tool metadata JSON to stdout (no IDA required)."""
+    import json
+    from ramune_ida.worker.plugins import discover_all
+
+    tools, _ = discover_all()
+    output = []
+    for t in tools:
+        meta = {k: v for k, v in t.items()
+                if not k.startswith("_") and not callable(v)}
+        output.append(meta)
+    json.dump(output, sys.stdout)
+
+
+def _run_worker() -> None:
+    """Normal worker: IDA environment + message loop."""
+    import signal
+    import traceback
+
+    # Must be the first import — initialises the IDA kernel.
+    import idapro  # noqa: F401
+
+    # Register lifecycle command handlers (decorator side-effect).
+    import ramune_ida.worker.handlers.session  # noqa: F401
+
+    # Register plugin-style tool handlers (built-in core + external plugins).
+    from ramune_ida.worker.plugins import discover_all
+    from ramune_ida.worker.dispatch import register_plugins
+
+    _, handler_map = discover_all()
+    register_plugins(handler_map)
+
+    from ramune_ida.worker import cancel
+    from ramune_ida.worker.socket_io import SocketIO
+    from ramune_ida.worker.dispatch import dispatch
+    from ramune_ida.commands import Ping, Shutdown
+    from ramune_ida.protocol import Method, Response
+
     signal.signal(signal.SIGUSR1, lambda _sig, _frame: cancel.request())
 
     io = SocketIO()
-
     io.send(Response.ok("__init__", {"status": "ready"}))
 
     while True:
@@ -67,4 +95,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if "--list-plugins" in sys.argv:
+        _list_plugins()
+    else:
+        _run_worker()

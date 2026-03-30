@@ -43,6 +43,10 @@ async def main():
     )
     app_module.configure(config)
 
+    from ramune_ida.server.plugins import discover_tools, register_plugin_tools
+    tools_meta = await discover_tools(sys.executable)
+    register_plugin_tools(tools_meta)
+
     from ramune_ida.server.state import AppState
     state = AppState(config)
     await state.start()

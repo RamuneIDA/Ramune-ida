@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import Context
+from pydantic import Field
 
 from ramune_ida.commands import CloseDatabase, Ping
 from ramune_ida.server.app import get_state
@@ -64,7 +65,7 @@ async def projects(ctx: Context) -> dict:
 
 async def open_database(
     project_id: str,
-    path: str,
+    path: Annotated[str, Field(description="Binary or IDB path, relative to work_dir")],
     ctx: Context,
 ) -> dict:
     state = get_state()

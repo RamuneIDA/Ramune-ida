@@ -31,9 +31,14 @@ from ramune_ida.config import ServerConfig
 import ramune_ida.server.app as app_module
 
 
+_plugins_registered = False
+
+
 @pytest_asyncio.fixture
 async def mcp_ida(tmp_path):
     """Start MCP with real IDA worker (no mock)."""
+    global _plugins_registered
+
     config = ServerConfig(
         worker_python=WORKER_PYTHON,
         soft_limit=0,
@@ -46,6 +51,12 @@ async def mcp_ida(tmp_path):
     os.environ["PYTHONPATH"] = IDA_PYTHON_PATH + os.pathsep + os.environ.get("PYTHONPATH", "")
 
     app_module.configure(config)
+
+    if not _plugins_registered:
+        from ramune_ida.server.plugins import discover_tools, register_plugin_tools
+        tools_meta = await discover_tools(WORKER_PYTHON)
+        register_plugin_tools(tools_meta)
+        _plugins_registered = True
 
     from ramune_ida.server.state import AppState
     state = AppState(config)

@@ -1,4 +1,11 @@
-"""Handler for execute_python — run arbitrary IDAPython code."""
+"""Worker-side handler for execute_python.
+
+Runs arbitrary Python code in the IDA environment with
+stdout/stderr capture and ``_result`` convention.
+
+.. note:: Must stay compatible with Python 3.10.
+   See :mod:`ramune_ida.worker` docstring for details.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +14,7 @@ import sys
 import traceback
 from typing import Any
 
-from ramune_ida.commands import ExecPython
-from ramune_ida.protocol import ErrorCode, Method
-from ramune_ida.worker.dispatch import handler, HandlerError
+from ramune_ida.core import ToolError
 
 _IDA_MODULES = ("idaapi", "idc", "idautils")
 
@@ -25,10 +30,11 @@ def _build_namespace() -> dict[str, Any]:
     return ns
 
 
-@handler(Method.EXEC_PYTHON)
-def handle_exec_python(cmd: ExecPython) -> dict[str, Any]:
-    if not cmd.code:
-        raise HandlerError(ErrorCode.INVALID_PARAMS, "Missing required parameter: code")
+def execute_python(params: dict[str, Any]) -> dict[str, Any]:
+    """Execute arbitrary IDAPython code."""
+    code = params.get("code", "")
+    if not code:
+        raise ToolError(-4, "Missing required parameter: code")
 
     namespace = _build_namespace()
     stdout_buf = io.StringIO()
@@ -38,7 +44,7 @@ def handle_exec_python(cmd: ExecPython) -> dict[str, Any]:
     try:
         sys.stdout = stdout_buf
         sys.stderr = stderr_buf
-        exec(cmd.code, namespace)
+        exec(code, namespace)
     except Exception:
         error_msg = traceback.format_exc()
     finally:

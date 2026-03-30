@@ -10,13 +10,13 @@ Headless IDA Pro MCP Server — expose IDA Pro's reverse engineering capabilitie
 
 ## What is this?
 
-Ramune-ida runs IDA Pro (idalib) in headless mode and wraps it as an MCP server. AI agents like Claude, Cursor, or any MCP-compatible client can decompile functions, trace cross-references, rename symbols, and execute arbitrary IDAPython — all through structured tool calls.
+Ramune-ida runs IDA Pro (idalib) in headless mode and wraps it as an MCP server. AI agents like Claude, Cursor, or any MCP-compatible client can decompile functions, disassemble code, and execute arbitrary IDAPython — all through structured tool calls.
 
 ## Key Design Decisions
 
 **Process separation** — The MCP server and IDA run in separate processes. The server is pure async Python; each IDA worker is a single-threaded subprocess communicating via dedicated fd-pair pipes (JSON line protocol). This eliminates all thread-safety issues that plague IDA SDK usage.
 
-**Few thick tools, not many thin ones** — 14 core tools cover high-frequency operations with intelligent routing (e.g., `rename` handles globals, functions, and local variables). `execute_python` serves as a catch-all for anything the core tools don't cover.
+**Plugin architecture** — Tools are defined by metadata (description, parameters) and handler functions. The server discovers tools at startup, dynamically generates MCP tool functions, and dispatches calls to the worker. Adding a new tool requires only a metadata file and a handler — no boilerplate registration code. External plugins are supported via a plugin folder.
 
 **Worker is stateless** — Workers are disposable command executors. All management state (task queues, crash recovery) lives in the Project layer. If a worker crashes, the project spawns a new one and reopens the IDB transparently.
 
@@ -29,30 +29,33 @@ MCP Client (Claude / Cursor / ...)
 ┌──────────────────────────────────┐
 │  MCP Server (async Python)       │
 │  FastMCP + Project management    │
+│  Plugin discovery + registration │
 └──────────────┬───────────────────┘
                │  fd-pair pipe (JSON lines)
          ┌─────┼─────┐
          ▼     ▼     ▼
       Worker Worker Worker
       idalib idalib idalib
+      (plugin handlers)
 ```
 
 ## Current Status
 
 ### Implemented
 
-Session tools (7):
+**Session tools (7):**
 `open_project`, `close_project`, `projects`, `open_database`, `close_database`, `get_task_result`, `cancel_task`
 
-Analysis tools (2 MCP + 3 worker handlers):
+**Analysis & execution tools (3):**
 
-| Tool | Status |
-|------|--------|
-| `decompile` | MCP + Worker |
-| `execute_python` | MCP + Worker (stdout/stderr capture, `_result` convention, graceful cancel) |
-| `disasm` | Worker handler only (MCP registration pending) |
+| Tool | Description |
+|------|-------------|
+| `decompile` | Decompile a function by name or hex address |
+| `disasm` | Disassemble instructions at an address |
+| `execute_python` | Run arbitrary IDAPython (stdout/stderr capture, `_result` convention, graceful cancel) |
 
-Infrastructure:
+**Infrastructure:**
+- Plugin architecture: metadata-driven tool discovery, dynamic MCP registration, external plugin folder
 - Graceful cancellation: SIGUSR1 + `sys.setprofile` hook → 5s watchdog → SIGKILL fallback
 - Output truncation with HTTP download for full results
 - MCP Resources for project/file discovery
@@ -62,11 +65,16 @@ Infrastructure:
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| Phase 0 | Session management refactor | Done |
-| Phase 1 | Core analysis loop — decompile, disasm, xrefs, rename, survey, execute_python | In progress |
+| Phase 0 | Session management | Done |
+| Phase 1 | Core analysis — decompile, disasm, execute_python, xrefs, rename, survey | In progress |
 | Phase 2 | Query + search — list, search, read, resolve | Planned |
 | Phase 3 | Annotation — set_type, define_type, set_comment, undo | Planned |
-| Future | Plugin system, multi-agent collaboration | Design phase |
+
+## Plugins
+
+Ramune-ida supports external plugins. Drop a plugin folder into `~/.ramune-ida/plugins/` and restart — the tools appear automatically.
+
+See [Writing Plugins](docs/writing-plugins.md) for the full guide.
 
 ## Quick Start
 
@@ -140,4 +148,3 @@ For Claude Desktop or Cursor, add to your MCP config:
 ## License
 
 MIT
-

@@ -71,9 +71,14 @@ from ramune_ida.config import ServerConfig
 import ramune_ida.server.app as app_module
 
 
+_plugins_registered = False
+
+
 @pytest_asyncio.fixture
 async def mcp_app(tmp_path):
     """Configure and start the MCP app, yield it, then shut down."""
+    global _plugins_registered
+
     config = ServerConfig(
         worker_python=PYTHON,
         soft_limit=2,
@@ -82,6 +87,12 @@ async def mcp_app(tmp_path):
         work_base_dir=str(tmp_path / "projects"),
     )
     app_module.configure(config)
+
+    if not _plugins_registered:
+        from ramune_ida.server.plugins import discover_tools, register_plugin_tools
+        tools_meta = await discover_tools(PYTHON)
+        register_plugin_tools(tools_meta)
+        _plugins_registered = True
 
     from ramune_ida.server.state import AppState
     state = AppState(config)
@@ -412,7 +423,8 @@ async def test_decompile(mcp_app):
     r = await call(mcp, "decompile", {"project_id": "dec", "func": "main"})
     assert r["project_id"] == "dec"
     assert r["status"] == "completed"
-    assert r["echo"] == "decompile"
+    assert r["echo"] == "plugin:decompile"
+    assert r["params"]["func"] == "main"
 
 
 # ── execute_python ────────────────────────────────────────────────
@@ -539,6 +551,31 @@ async def test_execute_python_cancel_slow_sleep(mcp_app):
 
     r = await call(mcp, "get_task_result", {"project_id": pid, "task_id": task_id})
     assert r["status"] in ("cancelled", "not_found")
+
+
+# ── Plugin tools (disasm) ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_disasm_plugin_tool_registered(mcp_app):
+    """The 'disasm' plugin tool should be discoverable and callable."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "disasm-reg")
+    r = await call(mcp, "disasm", {"project_id": pid, "addr": "0x401000"})
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:disasm"
+    assert r["params"]["addr"] == "0x401000"
+    assert r["params"]["count"] == 20
+
+
+@pytest.mark.asyncio
+async def test_disasm_custom_count(mcp_app):
+    """disasm respects the count parameter."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "disasm-cnt")
+    r = await call(mcp, "disasm", {"project_id": pid, "addr": "main", "count": 5})
+    assert r["params"]["count"] == 5
 
 
 @pytest.mark.asyncio

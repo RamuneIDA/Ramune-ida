@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ramune_ida.protocol import Method, Request
 
@@ -99,49 +99,36 @@ class SaveDatabase(Command):
 
 
 # ---------------------------------------------------------------------------
-# Analysis commands
+# Plugin invocation (no Method enum, no Pydantic model)
 # ---------------------------------------------------------------------------
 
-class Decompile(Command):
-    method: ClassVar[Method] = Method.DECOMPILE
-    func: str = ""
+class PluginInvocation:
+    """Lightweight stand-in for Command in plugin tool calls.
 
-    class Result(BaseModel):
-        addr: str = ""
-        code: str = ""
+    Implements the interface that :class:`~ramune_ida.project.Task` and
+    :meth:`Project._exec_one` require (``method.value``, ``to_request``,
+    ``to_params``) without needing a :class:`Method` enum member or a
+    Pydantic model class.
+    """
 
-        def to_dict(self) -> dict[str, Any]:
-            return self.model_dump()
+    class _MethodProxy:
+        """Quacks like a :class:`Method` enum member."""
+        __slots__ = ("value",)
 
+        def __init__(self, v: str) -> None:
+            self.value = v
 
-class Disasm(Command):
-    method: ClassVar[Method] = Method.DISASM
-    addr: str = ""
-    count: int = 20
+    __slots__ = ("method", "_params")
 
-    class Result(BaseModel):
-        start_addr: str = ""
-        lines: list[dict[str, Any]] = Field(default_factory=list)
+    def __init__(self, tool_name: str, params: dict[str, Any]) -> None:
+        self.method = self._MethodProxy(f"plugin:{tool_name}")
+        self._params = params
 
-        def to_dict(self) -> dict[str, Any]:
-            return self.model_dump()
+    def to_params(self) -> dict[str, Any]:
+        return self._params
 
-
-# ---------------------------------------------------------------------------
-# Execution commands
-# ---------------------------------------------------------------------------
-
-class ExecPython(Command):
-    method: ClassVar[Method] = Method.EXEC_PYTHON
-    code: str = ""
-
-    class Result(BaseModel):
-        output: str = ""
-        result: Any = None
-        error: str = ""
-
-        def to_dict(self) -> dict[str, Any]:
-            return self.model_dump()
+    def to_request(self, req_id: str) -> Request:
+        return Request(id=req_id, method=self.method.value, params=self._params)
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +140,6 @@ COMMAND_TYPES: dict[str, type[Command]] = {
     for cls in (
         Ping, Shutdown,
         OpenDatabase, CloseDatabase, SaveDatabase,
-        Decompile, Disasm,
-        ExecPython,
     )
 }
 

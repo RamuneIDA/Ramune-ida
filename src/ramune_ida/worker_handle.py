@@ -19,6 +19,7 @@ import subprocess
 import orjson
 
 from ramune_ida.protocol import Request, Response
+from ramune_ida.worker.plugins import ENV_PLUGIN_DIR
 from ramune_ida.worker.socket_io import ENV_SOCK_FD
 
 log = logging.getLogger(__name__)
@@ -37,8 +38,9 @@ class WorkerHandle:
     must ensure only one ``execute()`` runs at a time per handle.
     """
 
-    def __init__(self, python_path: str = "python") -> None:
+    def __init__(self, python_path: str = "python", plugin_dir: str | None = None) -> None:
         self._python_path = python_path
+        self._plugin_dir = plugin_dir
 
         self.instance_id: str = ""
 
@@ -60,6 +62,8 @@ class WorkerHandle:
         try:
             env = dict(__import__("os").environ)
             env[ENV_SOCK_FD] = str(child_fd)
+            if self._plugin_dir:
+                env[ENV_PLUGIN_DIR] = self._plugin_dir
 
             self._proc = subprocess.Popen(
                 [self._python_path, "-m", "ramune_ida.worker.main"],

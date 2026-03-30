@@ -121,7 +121,7 @@ def main() -> None:
         elif method == "save_database":
             send({"id": rid, "result": {"status": "saved"}})
 
-        elif method == "exec_python":
+        elif method in ("exec_python", "plugin:execute_python"):
             code = params.get("code", "")
             if not code:
                 send({"id": rid, "error": {"code": -4, "message": "Missing required parameter: code"}})

@@ -10,13 +10,13 @@ Headless IDA Pro MCP Server —— 通过 [Model Context Protocol](https://model
 
 ## 这是什么？
 
-Ramune-ida 以 headless 模式运行 IDA Pro (idalib)，并将其封装为 MCP 服务器。Claude、Cursor 等 MCP 兼容客户端可以通过结构化工具调用来反编译函数、追踪交叉引用、重命名符号、执行任意 IDAPython。
+Ramune-ida 以 headless 模式运行 IDA Pro (idalib)，并将其封装为 MCP 服务器。Claude、Cursor 等 MCP 兼容客户端可以通过结构化工具调用来反编译函数、反汇编代码、执行任意 IDAPython。
 
 ## 核心设计
 
 **进程分离** —— MCP Server 和 IDA 运行在不同进程中。Server 是纯 async Python；每个 IDA Worker 是单线程子进程，通过专用 fd-pair 管道（JSON line 协议）通信。从架构层面消灭线程安全问题。
 
-**工具少而厚** —— 14 个核心工具覆盖高频操作，每个内部有智能路由逻辑（如 `rename` 自动处理全局/函数/局部变量）。`execute_python` 作为万能后备，覆盖一切长尾需求。
+**插件架构** —— 工具通过 metadata（描述、参数）和 handler 函数定义。Server 启动时自动发现工具，动态生成 MCP tool 函数并分发调用到 Worker。添加新工具只需写一个 metadata 文件和 handler 实现——无样板注册代码。支持外部插件文件夹。
 
 **Worker 无状态** —— Worker 是一次性命令执行器。所有管理状态（任务队列、崩溃恢复）集中在 Project 层。Worker 崩溃后 Project 自动重启并重新打开 IDB，对使用者完全透明。
 
@@ -29,31 +29,33 @@ MCP 客户端 (Claude / Cursor / ...)
 ┌──────────────────────────────────┐
 │  MCP Server (async Python)       │
 │  FastMCP + Project 管理          │
+│  插件发现 + 动态注册             │
 └──────────────┬───────────────────┘
                │  fd-pair pipe (JSON lines)
          ┌─────┼─────┐
          ▼     ▼     ▼
       Worker Worker Worker
       idalib idalib idalib
+      (插件 handler)
 ```
 
 ## 当前状态
 
 ### 已实现
 
-会话工具（7 个）：
+**会话工具（7 个）：**
 `open_project`、`close_project`、`projects`、`open_database`、`close_database`、`get_task_result`、`cancel_task`
 
-分析工具（2 个 MCP + 3 个 Worker handler）：
+**分析/执行工具（3 个）：**
 
-| 工具 | 状态 |
+| 工具 | 说明 |
 |------|------|
-| `decompile` | MCP + Worker |
-| `execute_python` | MCP + Worker（stdout/stderr 捕获、`_result` 约定、优雅取消） |
-| `disasm` | 仅 Worker handler（MCP 注册待完成） |
+| `decompile` | 反编译函数（支持函数名或十六进制地址） |
+| `disasm` | 反汇编指令 |
+| `execute_python` | 执行任意 IDAPython（stdout/stderr 捕获、`_result` 约定、优雅取消） |
 
-基础设施：
-
+**基础设施：**
+- 插件架构：metadata 驱动的工具发现、动态 MCP 注册、外部插件文件夹
 - 优雅取消：SIGUSR1 + `sys.setprofile` hook → 5 秒看门狗 → SIGKILL 兜底
 - 输出截断 + HTTP 下载完整结果
 - MCP Resources（项目/文件发现）
@@ -63,11 +65,16 @@ MCP 客户端 (Claude / Cursor / ...)
 
 | 阶段 | 重点 | 状态 |
 |------|------|------|
-| Phase 0 | 会话管理重构 | 已完成 |
-| Phase 1 | 核心分析循环 —— decompile、disasm、xrefs、rename、survey、execute_python | 进行中 |
+| Phase 0 | 会话管理 | 已完成 |
+| Phase 1 | 核心分析 —— decompile、disasm、execute_python、xrefs、rename、survey | 进行中 |
 | Phase 2 | 查询搜索 —— list、search、read、resolve | 计划中 |
 | Phase 3 | 标注 —— set_type、define_type、set_comment、undo | 计划中 |
-| 远期 | 插件系统、多 Agent 协作 | 设计阶段 |
+
+## 插件
+
+Ramune-ida 支持外部插件。将插件文件夹放入 `~/.ramune-ida/plugins/` 并重启服务器，工具会自动出现。
+
+详见[插件编写指南](docs/writing-plugins_zh.md)。
 
 ## 快速开始
 

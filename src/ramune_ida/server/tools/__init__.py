@@ -1,21 +1,14 @@
-"""Tool Registry — the single place that declares every MCP tool.
+"""Static tool registration — session, execution, and async-task tools.
 
-Open this file to see all available tools at a glance: name,
-description, and which module implements it.
+Worker-forwarded analysis tools (decompile, disasm, …) are now
+registered dynamically from ``core/`` metadata by
+:mod:`~ramune_ida.server.plugins` during lifespan.
 
-Implementation functions live in sibling modules (session.py,
-analysis.py, ...).  This file only handles **registration**.
-
-Adding a new tool
------------------
-1. ``commands.py``  — define the Command + Result dataclass
-2. ``worker/handlers/*.py``  — implement the IDA-side handler
-3. ``server/tools/<module>.py``  — write the MCP-side async function
-4. **Here** — add a ``register_tool(description=...)(impl)`` entry
+Only tools that need custom Server-side logic stay here.
 """
 
 from ramune_ida.server.app import register_tool
-from ramune_ida.server.tools import analysis, python, session
+from ramune_ida.server.tools import session
 
 # ── Project lifecycle ─────────────────────────────────────────────
 
@@ -34,7 +27,7 @@ register_tool(
 # ── Database lifecycle ────────────────────────────────────────────
 
 register_tool(
-    description="Open a binary or IDB in the project. Path is relative to work_dir.",
+    description="Open a binary or IDB in the project.",
 )(session.open_database)
 
 register_tool(
@@ -43,21 +36,6 @@ register_tool(
         "The project stays alive. Set force=true to kill without saving."
     ),
 )(session.close_database)
-
-# ── Analysis ──────────────────────────────────────────────────────
-
-register_tool(
-    description="Decompile a function by name or hex address.",
-)(analysis.decompile)
-
-# ── Execution ─────────────────────────────────────────────────────
-
-register_tool(
-    description=(
-        "Execute arbitrary IDAPython code. "
-        "Assign _result to return structured data; stdout/stderr are captured separately."
-    ),
-)(python.execute_python)
 
 # ── Async tasks ───────────────────────────────────────────────────
 

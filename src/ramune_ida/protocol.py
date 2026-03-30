@@ -51,14 +51,17 @@ class ErrorInfo(BaseModel, frozen=True):
 # ---------------------------------------------------------------------------
 
 class Method(str, Enum):
+    """Lifecycle methods — dispatched via Command classes.
+
+    Analysis / execution tools have migrated to the plugin system
+    (``core/`` metadata + handlers, ``plugin:`` IPC prefix).
+    """
+
     PING = "ping"
     SHUTDOWN = "shutdown"
     OPEN_DATABASE = "open_database"
     CLOSE_DATABASE = "close_database"
     SAVE_DATABASE = "save_database"
-    DECOMPILE = "decompile"
-    DISASM = "disasm"
-    EXEC_PYTHON = "exec_python"
 
 
 # ---------------------------------------------------------------------------
