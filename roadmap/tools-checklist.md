@@ -149,23 +149,35 @@ define_type([
 
 ## 执行工具
 
-### execute_python(code, timeout?)
+### execute_python(code, timeout?) ✅ 已实现
 在 idalib 环境中执行任意 IDAPython。
 万能后备，覆盖所有上面工具处理不了的场景。
-- stdout 捕获返回
-- _result 变量作为结构化返回值
-- 完整 traceback 返回
-- 预注入 idaapi, idautils, ida_funcs, ida_bytes, ida_hexrays, idc
+- stdout/stderr 分别捕获返回
+- _result 变量作为结构化返回值（保留原始类型，不 str 化）
+- 完整 traceback 在 error 字段返回（与 stderr 分离）
+- 预注入 idaapi, idc, idautils（IDA Console 标准环境，其他模块 AI 自行 import）
 - timeout 是唯一暴露超时参数的工具（AI 脚本复杂度不可预知），默认 60s
 - 其他工具的超时由 server 层按命令类型内部设定，不暴露给 AI
 
-**超时与取消策略（全局）：**
+实现文件：
+- server/tools/python.py — MCP 工具
+- worker/handlers/python.py — Worker handler（exec + namespace 构建 + stdout/stderr 重定向）
+- protocol.py Method.EXEC_PYTHON + commands.py ExecPython
+
+**超时与取消策略（全局）：** ✅ 已实现
 - 超时不等于失败，返回 task_id 供 AI 轮询
-- cancel 不应该总是 kill worker。优先优雅取消：
+- cancel 优先优雅取消（两阶段）：
   - 排队中的命令 → 直接从队列移除
-  - execute_python 执行中 → SIGUSR1 + sys.settrace cancel flag（纯 Python 代码可中断）
-  - IDA C 扩展内部阻塞 → 降级为 kill + respawn（最后手段）
+  - 执行中 → SIGUSR1 + sys.setprofile cancel flag（Python 函数调用边界可中断）
+  - 5s 看门狗超时 → SIGKILL 强杀（C 扩展阻塞时的兜底）
 - survey / list 等可能遍历大量数据的操作，handler 内部应检查 cancel flag 做分段返回
+
+实现文件：
+- worker/cancel.py — 取消标志模块（request/is_requested/reset）
+- worker/dispatch.py — CancelledError + sys.setprofile hook 安装
+- worker/main.py — SIGUSR1 信号注册
+- worker_handle.py — send_signal() 方法
+- project.py — cancel_task 两阶段 + _delayed_kill 看门狗
 
 ---
 

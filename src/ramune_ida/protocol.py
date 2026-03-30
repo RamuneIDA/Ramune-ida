@@ -9,6 +9,9 @@ This module defines the **wire format** and **shared enums**:
 
 Typed command definitions (parameters + result) live in
 :mod:`ramune_ida.commands`.
+
+.. note:: Imported by the worker — must stay compatible with Python 3.10.
+   See :mod:`ramune_ida.worker` docstring for details.
 """
 
 from __future__ import annotations

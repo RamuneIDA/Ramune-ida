@@ -6,6 +6,9 @@ class that describes the expected response.
 
 Use ``COMMAND_TYPES`` or ``command_from_params()`` to reconstruct a
 typed Command from wire-format data.
+
+.. note:: Imported by the worker — must stay compatible with Python 3.10.
+   See :mod:`ramune_ida.worker` docstring for details.
 """
 
 from __future__ import annotations
