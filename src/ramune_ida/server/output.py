@@ -24,8 +24,14 @@ class OutputStore:
     Actual content lives on disk under each project's ``outputs/`` dir.
     """
 
-    def __init__(self, max_length: int, max_outputs_per_project: int = 100) -> None:
+    def __init__(
+        self,
+        max_length: int,
+        preview_length: int = 3000,
+        max_outputs_per_project: int = 100,
+    ) -> None:
         self._max_length = max_length
+        self._preview_length = min(preview_length, max_length)
         self._max_outputs = max_outputs_per_project
         self._index: dict[str, dict[str, str]] = {}
 
@@ -71,8 +77,8 @@ class OutputStore:
 
         url = f"/files/{project_id}/outputs/{output_id}.txt"
         truncated = (
-            content[: self._max_length]
-            + f"\n\n... [truncated, full output: {url}]"
+            content[: self._preview_length]
+            + f"\n\n... [truncated {len(content)} chars, full output: {url}]"
         )
         return truncated, url
 

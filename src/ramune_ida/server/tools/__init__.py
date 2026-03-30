@@ -15,7 +15,7 @@ Adding a new tool
 """
 
 from ramune_ida.server.app import register_tool
-from ramune_ida.server.tools import session
+from ramune_ida.server.tools import analysis, python, session
 
 # ── Project lifecycle ─────────────────────────────────────────────
 
@@ -43,6 +43,21 @@ register_tool(
         "The project stays alive. Set force=true to kill without saving."
     ),
 )(session.close_database)
+
+# ── Analysis ──────────────────────────────────────────────────────
+
+register_tool(
+    description="Decompile a function by name or hex address.",
+)(analysis.decompile)
+
+# ── Execution ─────────────────────────────────────────────────────
+
+register_tool(
+    description=(
+        "Execute arbitrary IDAPython code. "
+        "Assign _result to return structured data; stdout/stderr are captured separately."
+    ),
+)(python.execute_python)
 
 # ── Async tasks ───────────────────────────────────────────────────
 

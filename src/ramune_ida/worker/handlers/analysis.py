@@ -26,12 +26,13 @@ def _resolve_addr(func: str) -> int:
 
     addr = ida_name.get_name_ea(0, func)
     if addr == 0xFFFFFFFFFFFFFFFF:  # BADADDR
-        raise HandlerError(ErrorCode.FUNCTION_NOT_FOUND, f"Cannot resolve: {func}")
+        raise HandlerError(ErrorCode.FUNCTION_NOT_FOUND, f"Cannot resolve '{func}'")
     return addr
 
 
 @handler(Method.DECOMPILE)
 def handle_decompile(cmd: Decompile) -> dict[str, Any]:
+    import ida_funcs
     import ida_hexrays
 
     if not cmd.func:
@@ -39,16 +40,21 @@ def handle_decompile(cmd: Decompile) -> dict[str, Any]:
 
     addr = _resolve_addr(cmd.func)
 
+    func_obj = ida_funcs.get_func(addr)
+    if func_obj is None:
+        raise HandlerError(ErrorCode.FUNCTION_NOT_FOUND, f"{hex(addr)} is not a function")
+
     try:
-        cfunc = ida_hexrays.decompile(addr)
+        cfunc = ida_hexrays.decompile(func_obj.start_ea)
     except ida_hexrays.DecompilationFailure as exc:
-        raise HandlerError(ErrorCode.DECOMPILE_FAILED, f"Decompilation failed: {exc}")
+        raise HandlerError(ErrorCode.DECOMPILE_FAILED, str(exc))
 
     if cfunc is None:
-        raise HandlerError(ErrorCode.DECOMPILE_FAILED, f"Decompilation returned None for {cmd.func}")
+        raise HandlerError(ErrorCode.DECOMPILE_FAILED, f"No result for {hex(func_obj.start_ea)}")
 
     return {
-        "addr": hex(addr),
+        "addr": hex(func_obj.start_ea),
+        "name": ida_funcs.get_func_name(func_obj.start_ea),
         "code": str(cfunc),
     }
 

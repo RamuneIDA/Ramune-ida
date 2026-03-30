@@ -104,6 +104,11 @@ class WorkerHandle:
         await self._send(request)
         return await self._recv()
 
+    def send_signal(self, sig: int) -> None:
+        """Send a signal to the worker process (e.g. SIGUSR1 for cancel)."""
+        if self._proc and self._proc.poll() is None:
+            self._proc.send_signal(sig)
+
     def kill(self) -> None:
         """Forcefully terminate the Worker process and clean up."""
         if self._proc and self._proc.poll() is None:

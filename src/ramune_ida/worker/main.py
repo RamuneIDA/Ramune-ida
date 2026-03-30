@@ -13,7 +13,7 @@ print() work normally. The IPC uses a UNIX socketpair.
 
 from __future__ import annotations
 
-import sys
+import signal
 import traceback
 
 # Step 1: import idapro — must be first
@@ -22,7 +22,9 @@ import idapro
 # Step 2: register all handlers
 import ramune_ida.worker.handlers.session  # noqa: F401
 import ramune_ida.worker.handlers.analysis  # noqa: F401
+import ramune_ida.worker.handlers.python  # noqa: F401
 
+from ramune_ida.worker import cancel
 from ramune_ida.worker.socket_io import SocketIO
 from ramune_ida.worker.dispatch import dispatch
 from ramune_ida.commands import Ping, Shutdown
@@ -30,6 +32,8 @@ from ramune_ida.protocol import Method, Response
 
 
 def main() -> None:
+    signal.signal(signal.SIGUSR1, lambda _sig, _frame: cancel.request())
+
     io = SocketIO()
 
     io.send(Response.ok("__init__", {"status": "ready"}))

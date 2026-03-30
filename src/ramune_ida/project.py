@@ -14,6 +14,7 @@ import asyncio
 import itertools
 import logging
 import os
+import signal
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -48,6 +49,7 @@ class Task:
     __slots__ = (
         "_task_id", "_command", "_status",
         "_result", "_error", "_coro",
+        "_cancel_requested",
     )
 
     def __init__(self, task_id: str, command: Command) -> None:
@@ -57,6 +59,7 @@ class Task:
         self._result: Any = None
         self._error: ErrorInfo | None = None
         self._coro: asyncio.Task[None] | None = None
+        self._cancel_requested = False
 
     def __repr__(self) -> str:
         return f"Task({self._task_id!r}, {self._command.method.value}, {self._status.value})"
@@ -244,12 +247,10 @@ class Project:
         task = self._tasks.get(task_id)
         if task is None or task.is_done:
             return
-        was_running = task.status == TaskStatus.RUNNING
-        if was_running and self._handle is not None:
-            task.cancel(kill_coro=False)
-            self._handle.kill()
-            self._handle = None
-            self._limiter.on_destroyed(self.project_id)
+        if task.status == TaskStatus.RUNNING and self._handle is not None:
+            task._cancel_requested = True
+            self._handle.send_signal(signal.SIGUSR1)
+            asyncio.ensure_future(self._delayed_kill(task))
         else:
             task.cancel()
 
@@ -263,6 +264,19 @@ class Project:
             if not task.is_done:
                 task.cancel()
         self._tasks.clear()
+
+    async def _delayed_kill(self, task: Task, grace: float = 5.0) -> None:
+        """Watchdog: if the worker doesn't respond within *grace* seconds
+        after SIGUSR1, force-kill it so the cancel actually takes effect."""
+        await asyncio.sleep(grace)
+        if task.is_done:
+            return
+        log.warning(
+            "Graceful cancel timed out for %s, killing worker",
+            task.task_id,
+        )
+        if self._handle is not None:
+            self._handle.kill()
 
     async def save(self) -> Task:
         """Queue a save_database task (waits for completion)."""
@@ -281,6 +295,9 @@ class Project:
                 resp = await self._handle.execute(req)
                 if task.status == TaskStatus.CANCELLED:
                     return
+                if task._cancel_requested:
+                    task.cancel(kill_coro=False)
+                    return
                 if resp.error:
                     task.fail(resp.error)
                 else:
@@ -291,7 +308,9 @@ class Project:
             if self._handle is not None:
                 self._handle = None
                 self._limiter.on_destroyed(self.project_id)
-            if task.status != TaskStatus.CANCELLED:
+            if task._cancel_requested:
+                task.cancel(kill_coro=False)
+            elif task.status != TaskStatus.CANCELLED:
                 task.fail(ErrorInfo(
                     code=ErrorCode.INTERNAL_ERROR,
                     message="worker died during execution",

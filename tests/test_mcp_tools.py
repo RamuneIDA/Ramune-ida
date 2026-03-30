@@ -1,0 +1,563 @@
+"""MCP full-chain tests — call tools through FastMCP.call_tool().
+
+Every test goes through the real MCP tool registration, parameter
+validation, and response serialisation path.  The IDA Worker is
+replaced by mock_worker.py.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import socket
+import subprocess
+import sys
+from typing import Any
+
+import pytest
+import pytest_asyncio
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+MOCK_WORKER = os.path.join(os.path.dirname(__file__), "mock_worker.py")
+PYTHON = sys.executable
+
+# ── Monkey-patch WorkerHandle to use mock_worker ──────────────────
+
+import ramune_ida.worker_handle as wh
+from ramune_ida.worker.socket_io import ENV_SOCK_FD
+
+
+async def _mock_spawn(self: wh.WorkerHandle, cwd: str | None = None) -> None:
+    self.instance_id = f"w-{next(wh._instance_counter):04d}"
+
+    parent_sock, child_sock = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    child_fd = child_sock.fileno()
+
+    env = os.environ.copy()
+    env[ENV_SOCK_FD] = str(child_fd)
+
+    try:
+        self._proc = subprocess.Popen(
+            [PYTHON, MOCK_WORKER],
+            env=env,
+            cwd=cwd,
+            pass_fds=(child_fd,),
+        )
+    except Exception:
+        parent_sock.close()
+        child_sock.close()
+        raise
+    finally:
+        child_sock.close()
+
+    parent_sock.setblocking(False)
+    self._reader, self._writer = await asyncio.open_connection(sock=parent_sock)
+
+    ready = await self._recv()
+    if ready.error:
+        raise wh.WorkerDead(f"mock worker failed: {ready.error.message}")
+
+
+@pytest.fixture(autouse=True)
+def _patch_spawn(monkeypatch):
+    monkeypatch.setattr(wh.WorkerHandle, "spawn", _mock_spawn)
+
+
+# ── Setup: configure AppState before importing mcp instance ───────
+
+from ramune_ida.config import ServerConfig
+import ramune_ida.server.app as app_module
+
+
+@pytest_asyncio.fixture
+async def mcp_app(tmp_path):
+    """Configure and start the MCP app, yield it, then shut down."""
+    config = ServerConfig(
+        worker_python=PYTHON,
+        soft_limit=2,
+        hard_limit=4,
+        auto_save_interval=0,
+        work_base_dir=str(tmp_path / "projects"),
+    )
+    app_module.configure(config)
+
+    from ramune_ida.server.state import AppState
+    state = AppState(config)
+    await state.start()
+    app_module._state = state
+
+    yield app_module.mcp
+
+    await state.shutdown()
+    app_module._state = None
+
+
+# ── Helper ────────────────────────────────────────────────────────
+
+
+async def call(mcp, name: str, args: dict[str, Any] | None = None) -> dict:
+    """Call an MCP tool and return the result as a dict."""
+    result = await mcp.call_tool(name, args or {})
+    # call_tool may return: list[TextContent], tuple(list[TextContent], dict), or dict
+    if isinstance(result, tuple):
+        content_list = result[0]
+    elif isinstance(result, list):
+        content_list = result
+    elif isinstance(result, dict):
+        return result
+    else:
+        raise ValueError(f"Unexpected call_tool result: {type(result)}: {result}")
+    for item in content_list:
+        text = getattr(item, "text", None)
+        if text:
+            return json.loads(text)
+    raise ValueError(f"No text content in call_tool result: {result}")
+
+
+# ── Full workflow ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_full_workflow(mcp_app, tmp_path):
+    """open_project -> open_database -> projects -> close_database -> close_project"""
+    mcp = mcp_app
+
+    r = await call(mcp, "open_project", {"project_id": "flow-test"})
+    pid = r["project_id"]
+    assert pid == "flow-test"
+    assert "work_dir" in r
+
+    work_dir = r["work_dir"]
+    with open(os.path.join(work_dir, "sample.bin"), "wb") as f:
+        f.write(b"\x7fELF" + b"\x00" * 100)
+
+    r = await call(mcp, "open_database", {"project_id": pid, "path": "sample.bin"})
+    assert r["status"] == "completed"
+    assert r["project_id"] == pid
+
+    r = await call(mcp, "projects")
+    assert r["count"] == 1
+    assert r["projects"][0]["project_id"] == pid
+    assert r["projects"][0]["has_worker"] is True
+    assert r["projects"][0]["has_database"] is True
+
+    r = await call(mcp, "close_database", {"project_id": pid})
+    assert r["status"] in ("completed", "killed")
+
+    r = await call(mcp, "close_project", {"project_id": pid})
+    assert r["status"] == "closed"
+
+    r = await call(mcp, "projects")
+    assert r["count"] == 0
+
+
+# ── open_project ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_open_project_auto_id(mcp_app):
+    r = await call(mcp_app, "open_project")
+    assert "project_id" in r
+    assert "work_dir" in r
+    assert len(r["project_id"]) == 8
+
+
+@pytest.mark.asyncio
+async def test_open_project_custom_id(mcp_app):
+    r = await call(mcp_app, "open_project", {"project_id": "my-proj"})
+    assert r["project_id"] == "my-proj"
+
+
+@pytest.mark.asyncio
+async def test_open_project_invalid_id(mcp_app):
+    with pytest.raises(Exception):
+        await call(mcp_app, "open_project", {"project_id": "../../bad"})
+
+
+@pytest.mark.asyncio
+async def test_open_project_duplicate_id(mcp_app):
+    await call(mcp_app, "open_project", {"project_id": "dup"})
+    with pytest.raises(Exception):
+        await call(mcp_app, "open_project", {"project_id": "dup"})
+
+
+# ── open_database ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_open_database_relative_path(mcp_app):
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "db-rel"})
+    work_dir = r["work_dir"]
+
+    with open(os.path.join(work_dir, "test.bin"), "wb") as f:
+        f.write(b"\x00" * 16)
+
+    r = await call(mcp, "open_database", {"project_id": "db-rel", "path": "test.bin"})
+    assert r["status"] == "completed"
+    assert r.get("exe_path", "").endswith("test.bin")
+    assert "idb_path" in r
+
+
+@pytest.mark.asyncio
+async def test_open_database_idb_path(mcp_app):
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "db-idb"})
+    work_dir = r["work_dir"]
+
+    with open(os.path.join(work_dir, "analysis.i64"), "wb") as f:
+        f.write(b"\x00" * 16)
+
+    r = await call(mcp, "open_database", {"project_id": "db-idb", "path": "analysis.i64"})
+    assert r["status"] == "completed"
+    assert r.get("idb_path", "").endswith("analysis.i64")
+    assert "exe_path" not in r
+
+
+@pytest.mark.asyncio
+async def test_open_database_unknown_project(mcp_app):
+    with pytest.raises(Exception):
+        await call(mcp_app, "open_database", {"project_id": "nope", "path": "x.bin"})
+
+
+# ── close_database ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_close_database_graceful(mcp_app):
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "close-g"})
+    with open(os.path.join(r["work_dir"], "a.bin"), "wb") as f:
+        f.write(b"\x00")
+
+    await call(mcp, "open_database", {"project_id": "close-g", "path": "a.bin"})
+    r = await call(mcp, "close_database", {"project_id": "close-g"})
+    assert r["status"] in ("completed", "killed")
+
+    r = await call(mcp, "projects")
+    p = [x for x in r["projects"] if x["project_id"] == "close-g"][0]
+    assert p["has_worker"] is False
+
+
+@pytest.mark.asyncio
+async def test_close_database_force(mcp_app):
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "close-f"})
+    with open(os.path.join(r["work_dir"], "a.bin"), "wb") as f:
+        f.write(b"\x00")
+
+    await call(mcp, "open_database", {"project_id": "close-f", "path": "a.bin"})
+    r = await call(mcp, "close_database", {"project_id": "close-f", "force": True})
+    assert r["status"] == "killed"
+
+
+@pytest.mark.asyncio
+async def test_close_database_no_worker(mcp_app):
+    mcp = mcp_app
+    await call(mcp, "open_project", {"project_id": "close-nw"})
+    r = await call(mcp, "close_database", {"project_id": "close-nw"})
+    assert r["status"] == "no_worker"
+
+
+# ── close_project ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_close_project_cleans_up(mcp_app):
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "clean"})
+    work_dir = r["work_dir"]
+    assert os.path.isdir(work_dir)
+
+    await call(mcp, "close_project", {"project_id": "clean"})
+    assert not os.path.isdir(work_dir)
+
+
+@pytest.mark.asyncio
+async def test_close_project_unknown(mcp_app):
+    with pytest.raises(Exception):
+        await call(mcp_app, "close_project", {"project_id": "nope"})
+
+
+# ── projects ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_projects_empty(mcp_app):
+    r = await call(mcp_app, "projects")
+    assert r["count"] == 0
+    assert r["projects"] == []
+
+
+@pytest.mark.asyncio
+async def test_projects_multiple(mcp_app):
+    mcp = mcp_app
+    await call(mcp, "open_project", {"project_id": "p1"})
+    await call(mcp, "open_project", {"project_id": "p2"})
+    r = await call(mcp, "projects")
+    assert r["count"] == 2
+    ids = {p["project_id"] for p in r["projects"]}
+    assert ids == {"p1", "p2"}
+
+
+@pytest.mark.asyncio
+async def test_projects_shows_database_state(mcp_app):
+    mcp = mcp_app
+    await call(mcp, "open_project", {"project_id": "pdb"})
+
+    r = await call(mcp, "projects")
+    p = r["projects"][0]
+    assert p["has_database"] is False
+    assert p["exe_path"] is None
+    assert p["idb_path"] is None
+
+
+# ── cancel_task ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_not_found(mcp_app):
+    mcp = mcp_app
+    await call(mcp, "open_project", {"project_id": "cancel-t"})
+    r = await call(mcp, "cancel_task", {"project_id": "cancel-t", "task_id": "t-999999"})
+    assert r["status"] == "cancelled"
+
+
+# ── get_task_result ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_task_result_not_found(mcp_app):
+    mcp = mcp_app
+    await call(mcp, "open_project", {"project_id": "poll-t"})
+    r = await call(mcp, "get_task_result", {"project_id": "poll-t", "task_id": "t-999999"})
+    assert r["status"] == "not_found"
+
+
+# ── Soft limit warning ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_soft_limit_warning(mcp_app):
+    mcp = mcp_app
+    for i in range(3):
+        pid = f"sl{i}"
+        r = await call(mcp, "open_project", {"project_id": pid})
+        with open(os.path.join(r["work_dir"], "a.bin"), "wb") as f:
+            f.write(b"\x00")
+        r = await call(mcp, "open_database", {"project_id": pid, "path": "a.bin"})
+        if i >= 2:
+            assert "warning" in r
+
+
+# ── Restart recovery ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery(tmp_path):
+    """Projects survive server restart (recovered from work_dir folders)."""
+    config = ServerConfig(
+        worker_python=PYTHON,
+        soft_limit=0,
+        hard_limit=0,
+        auto_save_interval=0,
+        work_base_dir=str(tmp_path / "projects"),
+    )
+    app_module.configure(config)
+
+    from ramune_ida.server.state import AppState
+
+    state1 = AppState(config)
+    await state1.start()
+    app_module._state = state1
+    mcp = app_module.mcp
+
+    await call(mcp, "open_project", {"project_id": "surv1"})
+    await call(mcp, "open_project", {"project_id": "surv2"})
+
+    await state1.shutdown()
+    app_module._state = None
+
+    state2 = AppState(config)
+    await state2.start()
+    app_module._state = state2
+
+    r = await call(mcp, "projects")
+    ids = {p["project_id"] for p in r["projects"]}
+    assert "surv1" in ids
+    assert "surv2" in ids
+    for p in r["projects"]:
+        assert p["has_database"] is False
+        assert p["has_worker"] is False
+
+    await state2.shutdown()
+    app_module._state = None
+
+
+# ── Analysis tools ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_decompile(mcp_app):
+    """decompile through MCP call_tool (mock worker echoes the command)."""
+    mcp = mcp_app
+    r = await call(mcp, "open_project", {"project_id": "dec"})
+    work_dir = r["work_dir"]
+    with open(os.path.join(work_dir, "a.bin"), "wb") as f:
+        f.write(b"\x00")
+    await call(mcp, "open_database", {"project_id": "dec", "path": "a.bin"})
+
+    r = await call(mcp, "decompile", {"project_id": "dec", "func": "main"})
+    assert r["project_id"] == "dec"
+    assert r["status"] == "completed"
+    assert r["echo"] == "decompile"
+
+
+# ── execute_python ────────────────────────────────────────────────
+
+
+async def _setup_project(mcp, pid: str = "pyexec") -> str:
+    """Helper: create project + open database, return project_id."""
+    r = await call(mcp, "open_project", {"project_id": pid})
+    work_dir = r["work_dir"]
+    with open(os.path.join(work_dir, "a.bin"), "wb") as f:
+        f.write(b"\x00")
+    await call(mcp, "open_database", {"project_id": pid, "path": "a.bin"})
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_execute_python_basic(mcp_app):
+    """stdout is captured and returned."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-basic")
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": 'print("hello world")',
+    })
+    assert r["status"] == "completed"
+    assert "hello world" in r["output"]
+    assert r["error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_python_result(mcp_app):
+    """_result variable is returned as structured data."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-result")
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": '_result = {"key": "value", "num": 42}',
+    })
+    assert r["status"] == "completed"
+    assert r["result"] == {"key": "value", "num": 42}
+    assert r["error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_python_error(mcp_app):
+    """Errors include traceback and any stdout produced before the error."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-error")
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": 'print("before error")\n1/0',
+    })
+    assert r["status"] == "completed"
+    assert "before error" in r["output"]
+    assert "ZeroDivisionError" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_stderr(mcp_app):
+    """stderr is captured separately from stdout."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-stderr")
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": 'import sys\nprint("out")\nsys.stderr.write("err\\n")',
+    })
+    assert r["status"] == "completed"
+    assert "out" in r["output"]
+    assert "err" in r["stderr"]
+    assert r["error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_python_empty_code(mcp_app):
+    """Empty code returns an error."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-empty")
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": "",
+    })
+    assert r["status"] == "failed"
+    assert "code" in r.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_python_cancel_fast_sleep(mcp_app):
+    """Graceful cancel: short sleep loop, setprofile fires on c_return."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-cancel1")
+
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": "import time\nwhile True: time.sleep(0.01)",
+        "timeout": 1,
+    })
+    assert r["status"] == "running"
+    task_id = r["task_id"]
+
+    await call(mcp, "cancel_task", {"project_id": pid, "task_id": task_id})
+    await asyncio.sleep(1.0)
+
+    r = await call(mcp, "get_task_result", {"project_id": pid, "task_id": task_id})
+    assert r["status"] in ("cancelled", "not_found")
+
+
+@pytest.mark.asyncio
+async def test_execute_python_cancel_slow_sleep(mcp_app):
+    """Graceful cancel: sleep(1) loop — SIGUSR1 interrupts the sleep,
+    setprofile fires on c_return after the signal."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-cancel2")
+
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": "import time\nwhile True: time.sleep(1)",
+        "timeout": 1,
+    })
+    assert r["status"] == "running"
+    task_id = r["task_id"]
+
+    await call(mcp, "cancel_task", {"project_id": pid, "task_id": task_id})
+    await asyncio.sleep(2.0)
+
+    r = await call(mcp, "get_task_result", {"project_id": pid, "task_id": task_id})
+    assert r["status"] in ("cancelled", "not_found")
+
+
+@pytest.mark.asyncio
+async def test_execute_python_cancel_tight_loop(mcp_app):
+    """Fallback cancel: tight loop with no function calls — setprofile
+    never fires, so after 5s grace period the watchdog sends SIGKILL."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "py-cancel3")
+
+    r = await call(mcp, "execute_python", {
+        "project_id": pid,
+        "code": "while True: pass",
+        "timeout": 1,
+    })
+    assert r["status"] == "running"
+    task_id = r["task_id"]
+
+    await call(mcp, "cancel_task", {"project_id": pid, "task_id": task_id})
+    await asyncio.sleep(7.0)
+
+    r = await call(mcp, "get_task_result", {"project_id": pid, "task_id": task_id})
+    assert r["status"] in ("cancelled", "not_found")

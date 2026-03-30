@@ -34,6 +34,7 @@ class AppState:
         self.projects: dict[str, Project] = {}
         self.output_store = OutputStore(
             max_length=config.output_max_length,
+            preview_length=config.output_preview_length,
             max_outputs_per_project=config.output_max_per_project,
         )
 

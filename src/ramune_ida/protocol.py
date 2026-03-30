@@ -13,9 +13,10 @@ Typed command definitions (parameters + result) live in
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from enum import IntEnum, Enum
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -34,10 +35,10 @@ class ErrorCode(IntEnum):
     DECOMPILE_FAILED = -13
     TIMEOUT = -14
     PYTHON_EXEC_ERROR = -15
+    CANCELLED = -16
 
 
-@dataclass(slots=True)
-class ErrorInfo:
+class ErrorInfo(BaseModel, frozen=True):
     code: int
     message: str
 
@@ -54,19 +55,19 @@ class Method(str, Enum):
     SAVE_DATABASE = "save_database"
     DECOMPILE = "decompile"
     DISASM = "disasm"
+    EXEC_PYTHON = "exec_python"
 
 
 # ---------------------------------------------------------------------------
 # IPC messages (Server ↔ Worker, JSON line protocol over socketpair)
 # ---------------------------------------------------------------------------
 
-@dataclass(slots=True)
-class Request:
+class Request(BaseModel):
     """Wire-format message from Server to Worker."""
 
     id: str
     method: str
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "method": self.method, "params": self.params}
@@ -80,8 +81,7 @@ class Request:
         )
 
 
-@dataclass(slots=True)
-class Response:
+class Response(BaseModel):
     """Wire-format message from Worker to Server."""
 
     id: str
@@ -91,7 +91,7 @@ class Response:
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"id": self.id}
         if self.error is not None:
-            d["error"] = asdict(self.error)
+            d["error"] = self.error.model_dump()
         else:
             d["result"] = self.result
         return d

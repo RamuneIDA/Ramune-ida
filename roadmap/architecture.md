@@ -633,7 +633,7 @@ src/ramune_ida/
 ├── __init__.py
 ├── __main__.py                  # python -m ramune_ida
 ├── cli.py                       # CLI 入口（argparse）
-├── config.py                    # 配置定义（Pydantic Settings）
+├── config.py                    # 配置定义（ Settings）
 │
 ├── protocol.py                  # IPC 消息定义（Request/Response/ErrorInfo/TaskStatus）
 ├── limiter.py                   # Limiter — 全局实例计数 + soft/hard limit + config

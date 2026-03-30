@@ -1,11 +1,18 @@
-"""Command dispatch: routes Method → handler function."""
+"""Command dispatch: routes Method → handler function.
+
+Installs ``sys.setprofile`` around every handler call so that
+a cancellation flag (set via SIGUSR1) is checked at Python
+function-call boundaries.
+"""
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable
 
 from ramune_ida.commands import Command, command_from_params
 from ramune_ida.protocol import ErrorCode, Method, Request, Response
+from ramune_ida.worker import cancel
 
 Handler = Callable[[Command], Any]
 
@@ -20,8 +27,15 @@ def handler(method: Method) -> Callable[[Handler], Handler]:
     return decorator
 
 
+def _cancel_profile(frame: Any, event: str, arg: Any) -> None:
+    """setprofile callback — raise on function call/return if cancelled."""
+    if cancel.is_requested():
+        raise CancelledError
+
+
 def dispatch(request: Request) -> Response:
     """Look up the handler for *request.method* and call it."""
+    cancel.reset()
     try:
         cmd = command_from_params(request.method, request.params)
     except ValueError:
@@ -39,8 +53,11 @@ def dispatch(request: Request) -> Response:
             f"No handler for method: {request.method}",
         )
     try:
+        sys.setprofile(_cancel_profile)
         result = fn(cmd)
         return Response.ok(request.id, result)
+    except CancelledError:
+        return Response.fail(request.id, ErrorCode.CANCELLED, "Task cancelled")
     except HandlerError as exc:
         return Response.fail(request.id, exc.code, str(exc))
     except Exception as exc:
@@ -49,6 +66,17 @@ def dispatch(request: Request) -> Response:
             ErrorCode.INTERNAL_ERROR,
             f"{type(exc).__name__}: {exc}",
         )
+    finally:
+        sys.setprofile(None)
+        cancel.reset()
+
+
+class CancelledError(BaseException):
+    """Raised by the setprofile hook when cancellation is requested.
+
+    Inherits from BaseException so that ``except Exception`` in
+    handlers (especially execute_python) does not swallow it.
+    """
 
 
 class HandlerError(Exception):
