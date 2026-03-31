@@ -52,8 +52,9 @@ def _run_worker() -> None:
     from ramune_ida.worker.plugins import discover_all
     from ramune_ida.worker.dispatch import register_plugins
 
-    _, handler_map = discover_all()
-    register_plugins(handler_map)
+    all_tools, handler_map = discover_all()
+    meta_map = {t["name"]: t for t in all_tools}
+    register_plugins(handler_map, meta_map)
 
     from ramune_ida.worker import cancel
     from ramune_ida.worker.socket_io import SocketIO

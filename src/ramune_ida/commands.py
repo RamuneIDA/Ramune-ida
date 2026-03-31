@@ -92,6 +92,7 @@ class CloseDatabase(Command):
 
 class SaveDatabase(Command):
     method: ClassVar[Method] = Method.SAVE_DATABASE
+    idb_path: str = ""
 
     class Result(BaseModel):
         def to_dict(self) -> dict[str, Any]:

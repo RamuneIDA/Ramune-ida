@@ -2,29 +2,30 @@
 
 from __future__ import annotations
 
+from ramune_ida.worker.tags import TAG_KIND_READ
+
 TOOLS: list[dict] = [
     {
         "name": "decompile",
         "description": "Decompile a function.",
-        "tags": ["analysis"],
+        "tags": ["analysis", TAG_KIND_READ],
         "params": {
             "func": {
                 "type": "string",
                 "required": True,
-                "description": "Function name or hex address",
+                "description": "Name or hex address",
             },
         },
-        "timeout": 30,
     },
     {
         "name": "disasm",
-        "description": "Disassemble instructions starting at an address.",
-        "tags": ["analysis"],
+        "description": "Disassemble from an address.",
+        "tags": ["analysis", TAG_KIND_READ],
         "params": {
             "addr": {
                 "type": "string",
                 "required": True,
-                "description": "Address or function name",
+                "description": "Address or name",
             },
             "count": {
                 "type": "integer",
@@ -33,6 +34,23 @@ TOOLS: list[dict] = [
                 "description": "Number of instructions",
             },
         },
-        "timeout": 30,
+    },
+    {
+        "name": "xrefs",
+        "description": "List cross-references to a target.",
+        "tags": ["analysis", TAG_KIND_READ],
+        "params": {
+            "addr": {
+                "type": "string",
+                "required": True,
+                "description": "Address or name",
+            },
+        },
+    },
+    {
+        "name": "survey",
+        "description": "Binary overview: file identity, segments, entry/exports, function stats, import modules.",
+        "tags": ["analysis", TAG_KIND_READ],
+        "params": {},
     },
 ]

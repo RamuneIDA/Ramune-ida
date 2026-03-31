@@ -44,5 +44,5 @@ register_tool(
 )(session.get_task_result)
 
 register_tool(
-    description="Cancel a running or queued task.",
+    description="Cancel a task; kills the worker if graceful stop fails.",
 )(session.cancel_task)

@@ -23,3 +23,31 @@ class ToolError(Exception):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def resolve_addr(name_or_hex: str) -> int:
+    """Resolve a name or hex address string to an integer EA.
+
+    Accepts ``0x…`` hex literals, plain decimal integers, or IDA names.
+    Raises :class:`ToolError` when the name cannot be found.
+
+    IDA modules are imported lazily so this file can be imported
+    without ``idapro`` present (e.g. during ``--list-plugins``).
+    """
+    import ida_name  # noqa: delay import
+
+    if name_or_hex.startswith(("0x", "0X")):
+        try:
+            return int(name_or_hex, 16)
+        except ValueError:
+            pass
+
+    try:
+        return int(name_or_hex)
+    except ValueError:
+        pass
+
+    addr = ida_name.get_name_ea(0, name_or_hex)
+    if addr == 0xFFFFFFFFFFFFFFFF:  # BADADDR
+        raise ToolError(-12, "Cannot resolve '%s'" % name_or_hex)
+    return addr

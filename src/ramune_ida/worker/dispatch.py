@@ -16,19 +16,24 @@ Both tracks share the same cancellation / error-handling wrapper
 
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Any, Callable
 
 from ramune_ida.commands import Command, command_from_params
 from ramune_ida.core import ToolError
+from ramune_ida.worker.tags import TAG_KIND_WRITE
 from ramune_ida.protocol import ErrorCode, Method, Request, Response
 from ramune_ida.worker import cancel
+
+log = logging.getLogger(__name__)
 
 Handler = Callable[[Command], Any]
 PluginHandler = Callable[[dict[str, Any]], Any]
 
 _HANDLERS: dict[Method, Handler] = {}
 _PLUGIN_HANDLERS: dict[str, PluginHandler] = {}
+_PLUGIN_META: dict[str, dict[str, Any]] = {}
 
 PLUGIN_PREFIX = "plugin:"
 
@@ -41,9 +46,33 @@ def handler(method: Method) -> Callable[[Handler], Handler]:
     return decorator
 
 
-def register_plugins(handler_map: dict[str, Callable]) -> None:
-    """Bulk-register plugin-style handlers (called once at startup)."""
+def register_plugins(
+    handler_map: dict[str, Callable],
+    meta_map: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Bulk-register plugin-style handlers (called once at startup).
+
+    *meta_map* maps tool name → metadata dict (from ``metadata.py``).
+    Used to look up tags for framework behaviours (e.g. auto-undo).
+    """
     _PLUGIN_HANDLERS.update(handler_map)
+    if meta_map:
+        _PLUGIN_META.update(meta_map)
+
+
+def _maybe_create_undo_point(tool_name: str) -> None:
+    """Create an IDA undo point if the tool is tagged ``kind:write``."""
+    meta = _PLUGIN_META.get(tool_name)
+    if meta is None:
+        return
+    tags: list[str] = meta.get("tags", [])
+    if TAG_KIND_WRITE not in tags:
+        return
+    try:
+        import idaapi
+        idaapi.create_undo_point(tool_name, tool_name)
+    except Exception:
+        log.debug("Failed to create undo point for %s", tool_name, exc_info=True)
 
 
 def _cancel_profile(frame: Any, event: str, arg: Any) -> None:
@@ -64,6 +93,7 @@ def dispatch(request: Request) -> Response:
                 request.id, ErrorCode.METHOD_NOT_FOUND,
                 f"No plugin handler: {tool_name}",
             )
+        _maybe_create_undo_point(tool_name)
         invoker: Callable[[], Any] = lambda: fn(request.params or {})
     else:
         try:

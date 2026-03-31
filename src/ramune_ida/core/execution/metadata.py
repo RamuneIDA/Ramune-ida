@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+from ramune_ida.worker.tags import TAG_KIND_UNSAFE
+
 TOOLS: list[dict] = [
     {
         "name": "execute_python",
-        "description": "Execute IDAPython code in the IDA environment.",
-        "tags": ["execution"],
+        "description": "Execute IDAPython code.",
+        "tags": ["execution", TAG_KIND_UNSAFE],
         "params": {
             "code": {
                 "type": "string",
                 "required": True,
-                "description": "IDAPython code. Assign _result for structured return",
+                "description": "Assign _result for structured return",
+            },
+            "timeout": {
+                "type": "integer",
+                "required": False,
+                "default": 30,
+                "description": "Time limit in seconds",
             },
         },
-        "timeout": 60,
+        "timeout": 3,
     },
 ]

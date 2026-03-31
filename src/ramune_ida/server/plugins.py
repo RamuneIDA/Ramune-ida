@@ -174,16 +174,6 @@ def _register_one(meta: dict[str, Any]) -> None:
         *optional_params,
     ]
 
-    if default_timeout:
-        parameters.append(
-            inspect.Parameter(
-                "timeout",
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=Annotated[int, Field(description="Timeout in seconds")],
-                default=default_timeout,
-            )
-        )
-
     sig = inspect.Signature(parameters, return_annotation=dict)
 
     _tool_name = tool_name
@@ -193,7 +183,10 @@ def _register_one(meta: dict[str, Any]) -> None:
         project_id: str = kwargs["project_id"]
         kwargs.pop("project_id")
         kwargs.pop("ctx", None)
-        timeout_val = float(kwargs.pop("timeout", _default_timeout))
+        # If handler declares its own "timeout" param, it stays in kwargs
+        # and gets forwarded; the project-level timeout is always the
+        # metadata top-level value (infrastructure ceiling).
+        timeout_val = float(_default_timeout)
 
         state = get_state()
         project = state.resolve_project(project_id)

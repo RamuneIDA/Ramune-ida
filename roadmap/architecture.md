@@ -633,40 +633,46 @@ src/ramune_ida/
 ├── __init__.py
 ├── __main__.py                  # python -m ramune_ida
 ├── cli.py                       # CLI 入口（argparse）
-├── config.py                    # 配置定义（ Settings）
+├── config.py                    # 配置定义（Settings）
 │
-├── protocol.py                  # IPC 消息定义（Request/Response/ErrorInfo/TaskStatus）
-├── limiter.py                   # Limiter — 全局实例计数 + soft/hard limit + config
+├── protocol.py                  # IPC 消息定义（Request/Response/ErrorCode/TaskStatus）
+├── commands.py                  # Command 基类 + 内置命令 dataclass
+├── limiter.py                   # Limiter — 全局实例计数 + soft/hard limit
 ├── worker_handle.py             # WorkerHandle — 单个 Worker 子进程的 async 封装
-├── project.py                   # Project (= 一个 IDB) + Task — 拥有 WorkerHandle、任务队列、执行循环
+├── project.py                   # Project + Task — 拥有 WorkerHandle、任务队列、执行循环
 │
 ├── server/                      # MCP Server 层
-│   ├── __init__.py
-│   ├── app.py                   # FastMCP 实例创建、lifespan 管理
-│   ├── tools/                   # 工具定义（按类别分文件）
-│   │   ├── __init__.py          # 统一注册所有工具
-│   │   ├── session.py           # 会话管理工具
-│   │   ├── analysis.py          # decompile, disasm, xrefs_to, ...
-│   │   ├── query.py             # list_funcs, list_strings, list_imports, ...
-│   │   ├── memory.py            # get_bytes, get_string, get_int
-│   │   ├── modify.py            # rename, set_type, set_comment, declare_type
-│   │   └── python.py            # execute_python
-│   ├── output.py                # 输出截断/格式化
-│   └── snapshot.py              # IDB 快照管理（create/list/restore，纯文件操作）
+│   ├── app.py                   # FastMCP 实例、lifespan、register_tool
+│   ├── state.py                 # AppState（Project 集合、Limiter、OutputStore）
+│   ├── output.py                # OutputStore（磁盘存储、自动截断）
+│   ├── plugins.py               # 插件发现（子进程 --list-plugins）+ 动态 MCP tool 注册
+│   ├── files.py                 # HTTP 文件端点（upload/download）
+│   ├── resources.py             # MCP Resources
+│   └── tools/
+│       ├── __init__.py          # 静态 tool 注册（session 工具）
+│       └── session.py           # 会话管理 tool 实现
+│
+├── core/                        # 插件式工具（按领域分包）
+│   ├── __init__.py              # ToolError + resolve_addr
+│   ├── analysis/                # decompile, disasm, xrefs, survey
+│   ├── annotate/                # rename, get_comment, set_comment
+│   ├── data/                    # examine, get_bytes
+│   ├── execution/               # execute_python
+│   ├── listing/                 # list_funcs, list_strings, list_imports, list_names
+│   ├── search/                  # search, search_bytes
+│   ├── types/                   # set_type, define_type, _parse_tinfo
+│   └── undo/                    # undo
 │
 └── worker/                      # Worker 进程侧（运行在 idalib 环境中）
-    ├── __init__.py
-    ├── main.py                  # Worker 入口：消息循环
-    ├── dispatch.py              # 命令分发：method → handler
-    ├── handlers/                # 各命令的具体实现（调用 IDA API）
-    │   ├── __init__.py
-    │   ├── session.py           # open/close/save database
-    │   ├── analysis.py          # decompile, disasm, xrefs_to, ...
-    │   ├── query.py             # list_funcs, imports, strings, ...
-    │   ├── memory.py            # get_bytes, get_string, get_int
-    │   ├── modify.py            # rename, set_type, set_comment, ...
-    │   └── python.py            # execute_python
-    └── pipe_io.py               # 专用 fd pair JSON line 读写
+    ├── main.py                  # Worker 入口：消息循环 + --list-plugins CLI
+    ├── dispatch.py              # 双轨分发：Command track + plugin: prefix track
+    ├── plugins.py               # 统一发现：扫描 core 包 + 外部插件文件夹
+    ├── tags.py                  # 框架 tag 常量（kind:read/write/unsafe）
+    ├── cancel.py                # 取消标志（request/is_requested/reset）
+    ├── socket_io.py             # fd pair JSON line 读写
+    └── handlers/                # 内置 Command handler（session 等）
+        ├── session.py           # open/close/save database
+        └── analysis.py          # （历史遗留，逐步迁移到 core/）
 ```
 
 ### 核心类关系
@@ -686,19 +692,140 @@ WorkerHandle (每个 Worker 子进程一个)
   └── 进程管理 + pipe I/O
 ```
 
-**双侧对称设计**：`server/tools/` 和 `worker/handlers/` 的文件结构一一对应。
-- `server/tools/analysis.py` 定义 MCP 工具接口、参数校验、调用 Project
-- `worker/handlers/analysis.py` 实现具体的 IDA API 调用逻辑
+### 插件式工具架构
+
+与最初设计的 `server/tools/` ↔ `worker/handlers/` 双侧对称不同，现在采用**元数据驱动的插件架构**：
+
+- `core/<domain>/metadata.py` 声明工具（名称、描述、参数、tags）
+- `core/<domain>/handlers.py` 实现 handler（`params: dict → dict`）
+- `server/plugins.py` 在启动时自动发现并动态注册 MCP tool 函数
+- `worker/plugins.py` 自动发现并注册到 dispatch 的 plugin handler map
+- 添加新工具只需 2 处：metadata.py + handlers.py
+
+只有会话工具（需要 Server 侧逻辑）保持静态注册在 `server/tools/`。
+
+### 插件发现流程
+
+```
+启动流程：
+
+Server                                    Worker
+  │                                         │
+  │  subprocess: --list-plugins             │
+  │ ──────────────────────────────────────▶  │
+  │                                         │  worker/plugins.py:
+  │                                         │    discover_all()
+  │                                         │      → scan core/ sub-packages
+  │                                         │      → scan plugin folder
+  │  ◀── JSON metadata (stdout) ◀───────── │
+  │                                         │
+  │  server/plugins.py:                     │
+  │    register_plugin_tools()              │
+  │    → 动态生成 MCP tool 函数             │
+  │    → 设 __signature__ + __annotations__ │
+  │                                         │
+
+运行时调用：
+
+MCP Client → Server (plugin MCP tool)
+  → PluginInvocation("plugin:decompile", params)
+  → Project.execute() → Worker IPC
+  → Worker dispatch: plugin: prefix → handler
+  → 返回 dict → Task.to_mcp_result()
+```
+
+### Metadata 格式
+
+```python
+# core/<domain>/metadata.py
+from ramune_ida.worker.tags import TAG_KIND_READ
+
+TOOLS = [
+    {
+        "name": "identify_crypto",
+        "description": "Identify cryptographic algorithms by constant signatures.",
+        "tags": ["crypto", TAG_KIND_READ],
+        "params": {
+            "addr": {
+                "type": "string",
+                "required": False,
+                "description": "Limit scan to a specific function",
+            },
+        },
+        "timeout": 120,
+    },
+]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | str | MCP 工具名，全局唯一 |
+| `description` | str | 工具描述，直接用于 MCP schema |
+| `tags` | list[str] | 标签：`kind:read`/`kind:write`/`kind:unsafe`（框架行为）+ 自定义 |
+| `params` | dict | 参数定义：type / required / default / description |
+| `handler` | str? | 函数名覆盖（默认与 name 相同） |
+| `timeout` | int? | 默认超时秒数 |
+
+### Handler 接口
+
+```python
+def my_tool(params: dict[str, Any]) -> dict[str, Any]:
+    import idaapi  # 懒加载 IDA 模块
+    # ... 实现 ...
+    return {"result_key": "value"}
+```
+
+- **输入**：`params: dict`，字段由 metadata 中 `params` 定义
+- **输出**：`dict`，直接合并到 MCP tool 返回
+- **错误**：抛 `ToolError(code, message)` → 结构化错误响应
+- **取消**：sys.setprofile hook 由 dispatch 层自动安装，handler 无需关心
+- **IDA 模块**：函数体内 import（`--list-plugins` 模式不加载 idalib）
+
+### 外部插件
+
+用户可将插件包放入 `~/.ramune-ida/plugins/`（或 `RAMUNE_PLUGIN_DIR` 指定的路径）。
+每个插件是一个子目录，包含 `metadata.py` 和导出 handler 的 `__init__.py`。
+
+```
+~/.ramune-ida/plugins/
+└── my_plugin/
+    ├── __init__.py     # from .handlers import my_tool
+    ├── metadata.py     # TOOLS = [...]
+    └── handlers.py     # def my_tool(params: dict) -> dict: ...
+```
+
+工具名全局唯一，重名时 abort 并报错。
+
+### 添加新工具
+
+以在 `listing` 包中添加 `list_exports` 为例：
+
+1. **metadata**（`core/listing/metadata.py`）— 在 `TOOLS` 列表追加工具定义
+2. **handler**（`core/listing/handlers.py`）— 实现 handler 函数
+3. **导出**（`core/listing/__init__.py`）— 导出 handler
+
+重启 server 后自动出现为 MCP tool。无需修改 `server/`、`worker/dispatch.py`、`protocol.py`、`commands.py`。
+
+### 插件安全边界
+
+插件运行在 Worker 进程中，与 `execute_python` 的安全模型一致：
+
+- **不做沙箱** — IDA 环境需要完整权限
+- **进程隔离** — 插件崩溃 = Worker 崩溃，不影响 Server
+- **超时保护** — metadata 中声明的 timeout 生效
+- **取消支持** — sys.setprofile hook 自动安装
+- **输出截断** — Server 层的 output_limit 统一生效
+
+信任模型：安装插件 = 信任其代码。
 
 ### 模块职责边界
 
 | 模块 | 职责 | 不做什么 |
 |------|------|----------|
-| `server/` | MCP 协议、参数校验、输出格式化、IDB 快照管理、Project 集合管理、auto-save 循环 | 不调用任何 IDA API |
+| `server/` | MCP 协议、插件发现/注册、输出格式化、Project 集合管理 | 不调用任何 IDA API |
+| `core/` | 插件工具的 metadata + handler | 不知道 MCP 协议或 Project |
 | `project.py` | 单个 IDB 的任务执行、Worker 生命周期、崩溃恢复 | 不知道 MCP 协议、不管其他 Project |
-| `limiter.py` | 全局实例计数和限制判断 | 不知道 Project 或 Worker 的存在 |
-| `worker_handle.py` | 子进程管理、pipe I/O | 不知道 Task/Project 的存在 |
-| `worker/` | IDA API 调用、结果序列化 | 不知道 MCP 协议的存在 |
+| `worker/` | 命令分发、插件发现、tag 管理、IDA API 调用 | 不知道 MCP 协议的存在 |
 | `protocol.py` | 定义两侧共享的消息格式和状态枚举 | 不含业务逻辑 |
 
 ---

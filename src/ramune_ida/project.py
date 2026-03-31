@@ -298,10 +298,16 @@ class Project:
         )
         if self._handle is not None:
             self._handle.kill()
+            self._handle = None
+            self._limiter.on_destroyed(self.project_id)
 
     async def save(self) -> Task:
-        """Queue a save_database task (waits for completion)."""
-        return await self.execute(SaveDatabase())
+        """Queue a save_database task (waits for completion).
+
+        Flushes to IDA component files and also packs a .i64 snapshot
+        so that crash recovery can fall back to it.
+        """
+        return await self.execute(SaveDatabase(idb_path=self.idb_path or ""))
 
     # ==================================================================
     # Task execution
@@ -327,6 +333,7 @@ class Project:
             task.cancel()
         except WorkerDead:
             if self._handle is not None:
+                self._handle.kill()
                 self._handle = None
                 self._limiter.on_destroyed(self.project_id)
             if task._cancel_requested:
@@ -334,7 +341,11 @@ class Project:
             elif task.status != TaskStatus.CANCELLED:
                 task.fail(ErrorInfo(
                     code=ErrorCode.INTERNAL_ERROR,
-                    message="worker died during execution",
+                    message=(
+                        "Worker crashed during execution. "
+                        "Changes since last auto-save may be lost. "
+                        "The next command will automatically restart the worker."
+                    ),
                 ))
         except Exception as exc:
             task.fail(ErrorInfo(code=ErrorCode.INTERNAL_ERROR, message=str(exc)))

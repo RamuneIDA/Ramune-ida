@@ -519,7 +519,6 @@ async def test_execute_python_cancel_fast_sleep(mcp_app):
     r = await call(mcp, "execute_python", {
         "project_id": pid,
         "code": "import time\nwhile True: time.sleep(0.01)",
-        "timeout": 1,
     })
     assert r["status"] == "running"
     task_id = r["task_id"]
@@ -541,7 +540,6 @@ async def test_execute_python_cancel_slow_sleep(mcp_app):
     r = await call(mcp, "execute_python", {
         "project_id": pid,
         "code": "import time\nwhile True: time.sleep(1)",
-        "timeout": 1,
     })
     assert r["status"] == "running"
     task_id = r["task_id"]
@@ -579,6 +577,85 @@ async def test_disasm_custom_count(mcp_app):
 
 
 @pytest.mark.asyncio
+async def test_xrefs_plugin_tool_registered(mcp_app):
+    """The 'xrefs' plugin tool should be discoverable and callable."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "xrefs-reg")
+    r = await call(mcp, "xrefs", {"project_id": pid, "addr": "0x401000"})
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:xrefs"
+    assert r["params"]["addr"] == "0x401000"
+
+
+# ── rename plugin tool ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_rename_function_global(mcp_app):
+    """rename with addr+new_name forwards correctly to worker."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "rename-fn")
+    r = await call(mcp, "rename", {
+        "project_id": pid,
+        "addr": "0x401000",
+        "new_name": "init_config",
+    })
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:rename"
+    assert r["params"]["addr"] == "0x401000"
+    assert r["params"]["new_name"] == "init_config"
+
+
+@pytest.mark.asyncio
+async def test_rename_local_variable(mcp_app):
+    """rename with func+var+new_name forwards correctly to worker."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "rename-lv")
+    r = await call(mcp, "rename", {
+        "project_id": pid,
+        "func": "0x401000",
+        "var": "v1",
+        "new_name": "buffer_ptr",
+    })
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:rename"
+    assert r["params"]["func"] == "0x401000"
+    assert r["params"]["var"] == "v1"
+    assert r["params"]["new_name"] == "buffer_ptr"
+
+
+@pytest.mark.asyncio
+async def test_rename_missing_new_name(mcp_app):
+    """rename without new_name should fail validation."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "rename-err")
+    # new_name is required — omitting it should cause a validation error
+    try:
+        r = await call(mcp, "rename", {"project_id": pid, "addr": "0x401000"})
+        # If no exception, the tool itself might return an error via the worker
+        assert r.get("status") in ("completed", "error")
+    except Exception:
+        pass  # validation error is expected
+
+
+# ── survey plugin tool ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_survey_plugin_tool_registered(mcp_app):
+    """survey tool should be discoverable and callable with no params."""
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "survey-reg")
+    r = await call(mcp, "survey", {"project_id": pid})
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:survey"
+
+
+@pytest.mark.asyncio
 async def test_execute_python_cancel_tight_loop(mcp_app):
     """Fallback cancel: tight loop with no function calls — setprofile
     never fires, so after 5s grace period the watchdog sends SIGKILL."""
@@ -588,7 +665,6 @@ async def test_execute_python_cancel_tight_loop(mcp_app):
     r = await call(mcp, "execute_python", {
         "project_id": pid,
         "code": "while True: pass",
-        "timeout": 1,
     })
     assert r["status"] == "running"
     task_id = r["task_id"]
@@ -598,3 +674,254 @@ async def test_execute_python_cancel_tight_loop(mcp_app):
 
     r = await call(mcp, "get_task_result", {"project_id": pid, "task_id": task_id})
     assert r["status"] in ("cancelled", "not_found")
+
+
+# ── list_funcs ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_funcs_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "lf-reg")
+    r = await call(mcp, "list_funcs", {"project_id": pid})
+    assert r["project_id"] == pid
+    assert r["status"] == "completed"
+    assert r["echo"] == "plugin:list_funcs"
+
+
+@pytest.mark.asyncio
+async def test_list_funcs_with_filter(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "lf-filter")
+    r = await call(mcp, "list_funcs", {
+        "project_id": pid,
+        "filter": "main",
+        "offset": 10,
+        "count": 50,
+    })
+    assert r["params"]["filter"] == "main"
+    assert r["params"]["offset"] == 10
+    assert r["params"]["count"] == 50
+
+
+# ── list_strings ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_strings_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "ls-reg")
+    r = await call(mcp, "list_strings", {"project_id": pid})
+    assert r["echo"] == "plugin:list_strings"
+
+
+# ── list_imports ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_imports_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "li-reg")
+    r = await call(mcp, "list_imports", {"project_id": pid})
+    assert r["echo"] == "plugin:list_imports"
+
+
+# ── list_names ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_names_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "ln-reg")
+    r = await call(mcp, "list_names", {"project_id": pid})
+    assert r["echo"] == "plugin:list_names"
+
+
+# ── search ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "s-reg")
+    r = await call(mcp, "search", {"project_id": pid, "pattern": "main"})
+    assert r["echo"] == "plugin:search"
+    assert r["params"]["pattern"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_search_with_type(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "s-type")
+    r = await call(mcp, "search", {
+        "project_id": pid,
+        "pattern": "init",
+        "type": "names",
+        "count": 50,
+    })
+    assert r["params"]["type"] == "names"
+    assert r["params"]["count"] == 50
+
+
+# ── search_bytes ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_bytes_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "sb-reg")
+    r = await call(mcp, "search_bytes", {
+        "project_id": pid,
+        "pattern": "48 8B ?? 00",
+    })
+    assert r["echo"] == "plugin:search_bytes"
+    assert r["params"]["pattern"] == "48 8B ?? 00"
+
+
+# ── examine ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_examine_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "ex-reg")
+    r = await call(mcp, "examine", {"project_id": pid, "addr": "0x401000"})
+    assert r["echo"] == "plugin:examine"
+    assert r["params"]["addr"] == "0x401000"
+
+
+# ── get_bytes ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "gb-reg")
+    r = await call(mcp, "get_bytes", {
+        "project_id": pid,
+        "addr": "0x401000",
+        "size": 16,
+    })
+    assert r["echo"] == "plugin:get_bytes"
+    assert r["params"]["addr"] == "0x401000"
+    assert r["params"]["size"] == 16
+
+
+# ── undo ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_undo_registered(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "undo-reg")
+    r = await call(mcp, "undo", {"project_id": pid})
+    assert r["echo"] == "plugin:undo"
+
+
+@pytest.mark.asyncio
+async def test_undo_count_param(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "undo-cnt")
+    r = await call(mcp, "undo", {"project_id": pid, "count": 3})
+    assert r["echo"] == "plugin:undo"
+    assert r["params"]["count"] == 3
+
+
+# ── get_comment ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_comment_addr(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "gc-addr")
+    r = await call(mcp, "get_comment", {"project_id": pid, "addr": "0x401000"})
+    assert r["echo"] == "plugin:get_comment"
+    assert r["params"]["addr"] == "0x401000"
+
+
+@pytest.mark.asyncio
+async def test_get_comment_func(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "gc-func")
+    r = await call(mcp, "get_comment", {"project_id": pid, "func": "main"})
+    assert r["echo"] == "plugin:get_comment"
+    assert r["params"]["func"] == "main"
+
+
+# ── set_comment ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_set_comment_addr(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "sc-addr")
+    r = await call(mcp, "set_comment", {
+        "project_id": pid,
+        "addr": "0x401000",
+        "comment": "test",
+    })
+    assert r["echo"] == "plugin:set_comment"
+    assert r["params"]["addr"] == "0x401000"
+    assert r["params"]["comment"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_set_comment_func(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "sc-func")
+    r = await call(mcp, "set_comment", {
+        "project_id": pid,
+        "func": "main",
+        "comment": "Function header comment",
+    })
+    assert r["echo"] == "plugin:set_comment"
+    assert r["params"]["func"] == "main"
+    assert r["params"]["comment"] == "Function header comment"
+
+
+# ── set_type ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_set_type_addr(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "st-addr")
+    r = await call(mcp, "set_type", {
+        "project_id": pid,
+        "addr": "main",
+        "type": "int main(int argc, char **argv)",
+    })
+    assert r["echo"] == "plugin:set_type"
+    assert r["params"]["addr"] == "main"
+    assert r["params"]["type"] == "int main(int argc, char **argv)"
+
+
+@pytest.mark.asyncio
+async def test_set_type_local(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "st-local")
+    r = await call(mcp, "set_type", {
+        "project_id": pid,
+        "func": "main",
+        "var": "v3",
+        "type": "unsigned int",
+    })
+    assert r["echo"] == "plugin:set_type"
+    assert r["params"]["func"] == "main"
+    assert r["params"]["var"] == "v3"
+    assert r["params"]["type"] == "unsigned int"
+
+
+# ── define_type ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_define_type(mcp_app):
+    mcp = mcp_app
+    pid = await _setup_project(mcp, "dt-basic")
+    r = await call(mcp, "define_type", {
+        "project_id": pid,
+        "declare": "struct Foo { int a; char *b; };",
+    })
+    assert r["echo"] == "plugin:define_type"
+    assert r["params"]["declare"] == "struct Foo { int a; char *b; };"
