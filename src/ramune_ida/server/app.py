@@ -93,9 +93,9 @@ The IDA worker is started lazily: if it has exited or crashed, the next tool cal
 automatically restarts it and reopens the database. You do NOT need to call
 open_database again after a restart or between analysis commands.
 
-Multiple binaries: open a separate project for each binary. Each project runs
-its own isolated IDA process — they do not interfere with each other and can
-run in parallel.
+Concurrency: you can call multiple tools concurrently. Each project
+has an execution queue that guarantees ordering, so concurrent calls are always safe.
+Multiple projects run isolated IDA processes and never interfere with each other.
 
 Long-running operations return a task_id when they time out. Poll with get_task_result.
 If a tool cannot handle your request, use execute_python to run arbitrary IDAPython.

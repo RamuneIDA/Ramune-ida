@@ -87,12 +87,24 @@
 - Batch API（`decompile(addrs="a,b,c")`）让 Claude "可以"打包，但 LLM 的 ReAct 推理循环天然倾向一次一步，实际上很少利用 batch 能力
 - 结果：单项 API 反而比 batch API 更快，因为并发从"可选优化"变成了"唯一选择"
 
-**存疑**：以上解释缺乏充分数据验证。还可能受到以下因素影响：
+**Claude 自述**（直接询问得到的回答）：
+> 原因是 ramune-ida 支持多项目并行，每个 project 独立进程，所以可以并发；
+> ida-pro-mcp 是单 session 模型，并行请求会排队或冲突，所以串行。
+
+这个解释有漏洞：Claude 在 Ramune-ida 的**同一个 project** 内也会并发调用多个 decompile，
+说明它不只是跨 project 并发。更可能是 Claude 从 API 表面（instructions、project_id 隔离、
+工具数量等）推断出"安全可并发"的心理模型，而非真的理解底层架构。LLM 的自我内省不可靠。
+
+**存疑**：以上所有解释均缺乏充分数据验证。还可能受到以下因素影响：
 - MCP 客户端实现（不同 host 对 stdio/HTTP 的并发策略不同）
-- 工具描述的复杂度和返回数据量对 Claude 决策的影响
+- 工具数量（77 vs ~15）和 schema 复杂度对 Claude 保守程度的影响
+- instructions 字段的有无（ida-pro-mcp 的 zeromcp 不返回 instructions）
 - Claude 版本/模型差异
 
-**结论**：暂时保持单项 API 设计。后续如果要加 batch 支持，应作为**补充**而非替代——保留单项接口让 AI 自然并发，batch 接口面向程序化调用场景。需要更多实际使用数据来验证。
+**应对措施**：
+- 保持单项 API 设计；batch 如有需要作为补充而非替代
+- 在 INSTRUCTIONS 中显式鼓励并发："ALL read-only tools are safe to call concurrently"
+- 需要更多实际使用数据来验证哪些因素真正起作用
 
 ---
 
