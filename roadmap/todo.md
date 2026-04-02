@@ -76,6 +76,26 @@
 
 ---
 
+## 设计观察
+
+### AI 并发调用行为与 API 设计的关系（2026-04-02）
+
+**现象**：Ramune-ida（HTTP 传输 + 单项参数 API）使用时，Claude 会积极并发调用 3-4 个 tool（如同时反编译多个函数）。而 ida-pro-mcp（即使使用 HTTP 传输 + batch 参数 API）Claude 仍倾向于逐个调用。
+
+**可能的解释**：
+- 单项 API（`decompile(func)` 只接受一个函数）迫使 Claude 发多个独立 tool call → MCP 客户端自动并发
+- Batch API（`decompile(addrs="a,b,c")`）让 Claude "可以"打包，但 LLM 的 ReAct 推理循环天然倾向一次一步，实际上很少利用 batch 能力
+- 结果：单项 API 反而比 batch API 更快，因为并发从"可选优化"变成了"唯一选择"
+
+**存疑**：以上解释缺乏充分数据验证。还可能受到以下因素影响：
+- MCP 客户端实现（不同 host 对 stdio/HTTP 的并发策略不同）
+- 工具描述的复杂度和返回数据量对 Claude 决策的影响
+- Claude 版本/模型差异
+
+**结论**：暂时保持单项 API 设计。后续如果要加 batch 支持，应作为**补充**而非替代——保留单项接口让 AI 自然并发，batch 接口面向程序化调用场景。需要更多实际使用数据来验证。
+
+---
+
 ## 远期
 
 - [ ] analysis_progress — 分析进度统计（已命名/已注释/已设类型比例）

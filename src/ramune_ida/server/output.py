@@ -101,8 +101,8 @@ class OutputStore:
 
         url = _make_url(project_id, output_id, ".txt")
         truncated = (
-            content[: self._preview_length]
-            + f"\n\n... [truncated {len(content)} chars, full output: {url}]"
+            f"[truncated {len(content)} chars, full output: {url}]\n\n"
+            + content[: self._preview_length]
         )
         return truncated, url
 
@@ -133,8 +133,8 @@ class OutputStore:
         if isinstance(data, str):
             if len(data) > self._preview_length:
                 return (
-                    data[: self._preview_length]
-                    + f"\n\n... [truncated {len(data)} chars, full output: {url}]"
+                    f"[truncated {len(data)} chars, full output: {url}]\n\n"
+                    + data[: self._preview_length]
                 )
             return data
         if isinstance(data, dict):
@@ -146,17 +146,24 @@ class OutputStore:
     def _truncate_lists(self, data: Any, url: str) -> Any:
         """Phase 2: cap lists longer than _LIST_CAP items."""
         if isinstance(data, dict):
+            truncated_notes: list[str] = []
             result: dict[str, Any] = {}
             for k, v in data.items():
                 if isinstance(v, list) and len(v) > _LIST_CAP:
                     keep = max(_LIST_MIN, _LIST_CAP)
                     result[k] = v[:keep]
-                    result["_truncated"] = (
-                        f"Showing {keep} of {len(v)} items. "
-                        f"Full JSON: {url}"
+                    truncated_notes.append(
+                        f"{k}: showing {keep} of {len(v)} items"
                     )
                 else:
                     result[k] = self._truncate_lists(v, url)
+            if truncated_notes:
+                out: dict[str, Any] = {
+                    "_truncated": "; ".join(truncated_notes)
+                    + f". Full JSON: {url}"
+                }
+                out.update(result)
+                return out
             return result
         if isinstance(data, list):
             if len(data) > _LIST_CAP:

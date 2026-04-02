@@ -324,7 +324,7 @@ class TestOutputStore:
         text = "a" * 50
         result, url = store.truncate_if_needed(text, "p", str(tmp_path))
         assert "truncated" in result
-        assert result.startswith("a" * 10)
+        assert result.startswith("[truncated")
         assert url is not None
 
     def test_process_truncates_large_string(self, tmp_path):
@@ -333,9 +333,9 @@ class TestOutputStore:
         result = store.process(data, "p", str(tmp_path))
         assert result["short"] == "ok"
         assert result["num"] == 42
-        assert "truncated" in result["long"]
-        assert result["long"].startswith("x" * 20)
+        assert result["long"].startswith("[truncated")
         assert "/files/p/outputs/" in result["long"]
+        assert "x" * 20 in result["long"]
 
     def test_process_truncates_long_list(self, tmp_path):
         store = OutputStore(max_length=500)
@@ -344,6 +344,7 @@ class TestOutputStore:
         assert len(result["items"]) <= 30
         assert "_truncated" in result
         assert "200" in result["_truncated"]
+        assert list(result.keys())[0] == "_truncated"
 
     def test_process_fallback(self, tmp_path):
         store = OutputStore(max_length=50, preview_length=10)
