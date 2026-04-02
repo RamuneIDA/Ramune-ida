@@ -38,6 +38,7 @@ class AppState:
             max_outputs_per_project=config.output_max_per_project,
         )
 
+        self._project_lock = asyncio.Lock()
         self._auto_save_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
@@ -90,58 +91,66 @@ class AppState:
 
     _VALID_PROJECT_ID = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
 
-    def open_project(self, project_id: str | None = None) -> Project:
-        """Create a new Project workspace.  Does not open a database."""
-        if project_id is None:
-            project_id = secrets.token_hex(4)
-        if not self._VALID_PROJECT_ID.match(project_id):
-            raise ValueError(
-                f"Invalid project_id: {project_id!r} — "
-                f"use only A-Z a-z 0-9 _ - . (max 64 chars)"
+    async def open_project(
+        self, project_id: str | None = None
+    ) -> tuple[Project, bool]:
+        """Return ``(project, created)`` — idempotent and lock-protected.
+
+        If *project_id* already exists the existing Project is returned
+        with ``created=False``.
+        """
+        async with self._project_lock:
+            if project_id is None:
+                project_id = secrets.token_hex(4)
+            if not self._VALID_PROJECT_ID.match(project_id):
+                raise ValueError(
+                    f"Invalid project_id: {project_id!r} — "
+                    f"use only A-Z a-z 0-9 _ - . (max 64 chars)"
+                )
+            if project_id in self.projects:
+                return self.projects[project_id], False
+
+            work_dir = os.path.join(
+                self.config.resolved_work_base_dir, project_id
             )
-        if project_id in self.projects:
-            raise ValueError(f"Project ID '{project_id}' already exists")
+            os.makedirs(work_dir, exist_ok=True)
 
-        work_dir = os.path.join(
-            self.config.resolved_work_base_dir, project_id
-        )
-        os.makedirs(work_dir, exist_ok=True)
-
-        project = Project(
-            project_id=project_id,
-            work_dir=work_dir,
-            limiter=self.limiter,
-            worker_python=self.config.worker_python,
-            plugin_dir=self.config.resolved_plugin_dir,
-        )
-        self.projects[project_id] = project
-        log.info("Opened project %s", project_id)
-        return project
+            project = Project(
+                project_id=project_id,
+                work_dir=work_dir,
+                limiter=self.limiter,
+                worker_python=self.config.worker_python,
+                plugin_dir=self.config.resolved_plugin_dir,
+            )
+            self.projects[project_id] = project
+            log.info("Opened project %s", project_id)
+            return project, True
 
     async def close_project(self, project_id: str) -> None:
         """Gracefully close then destroy a project."""
-        project = self.projects.get(project_id)
-        if project is None:
-            raise KeyError(f"Unknown project: {project_id}")
+        async with self._project_lock:
+            project = self.projects.get(project_id)
+            if project is None:
+                raise KeyError(f"Unknown project: {project_id}")
 
-        if project._handle is not None:
-            try:
-                await asyncio.wait_for(
-                    project.execute(CloseDatabase()), timeout=30.0
-                )
-            except Exception:
-                log.warning(
-                    "Graceful close failed for %s, forcing", project_id
-                )
-            project.force_close()
+            if project._handle is not None:
+                try:
+                    await asyncio.wait_for(
+                        project.execute(CloseDatabase()), timeout=30.0
+                    )
+                except Exception:
+                    log.warning(
+                        "Graceful close failed for %s, forcing", project_id
+                    )
+                project.force_close()
 
-        self.projects.pop(project_id, None)
-        self.output_store.discard_project(project_id)
+            self.projects.pop(project_id, None)
+            self.output_store.discard_project(project_id)
 
-        if os.path.isdir(project.work_dir):
-            shutil.rmtree(project.work_dir, ignore_errors=True)
+            if os.path.isdir(project.work_dir):
+                shutil.rmtree(project.work_dir, ignore_errors=True)
 
-        log.info("Closed project %s", project_id)
+            log.info("Closed project %s", project_id)
 
     def resolve_project(self, project_id: str) -> Project:
         """Look up a project by ID.  Raises KeyError if not found."""

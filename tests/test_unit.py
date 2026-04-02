@@ -152,7 +152,7 @@ class TestAppState:
             soft_limit=2,
             hard_limit=4,
             auto_save_interval=0,
-            work_base_dir=str(tmp_path / "projects"),
+            data_dir=str(tmp_path),
         )
 
     @pytest.mark.asyncio
@@ -169,7 +169,8 @@ class TestAppState:
         state = AppState(config)
         await state.start()
         try:
-            p = state.open_project()
+            p, created = await state.open_project()
+            assert created is True
             assert p.project_id in state.projects
             assert len(p.project_id) == 8
             assert os.path.isdir(p.work_dir)
@@ -182,8 +183,9 @@ class TestAppState:
         state = AppState(config)
         await state.start()
         try:
-            p = state.open_project("my-proj")
+            p, created = await state.open_project("my-proj")
             assert p.project_id == "my-proj"
+            assert created is True
         finally:
             await state.shutdown()
 
@@ -194,25 +196,27 @@ class TestAppState:
         await state.start()
         try:
             with pytest.raises(ValueError, match="Invalid"):
-                state.open_project("../../bad")
+                await state.open_project("../../bad")
             with pytest.raises(ValueError, match="Invalid"):
-                state.open_project("has space")
+                await state.open_project("has space")
             with pytest.raises(ValueError, match="Invalid"):
-                state.open_project("")
+                await state.open_project("")
             with pytest.raises(ValueError, match="Invalid"):
-                state.open_project("a" * 65)
+                await state.open_project("a" * 65)
         finally:
             await state.shutdown()
 
     @pytest.mark.asyncio
-    async def test_open_project_duplicate_id(self, config):
+    async def test_open_project_idempotent(self, config):
         from ramune_ida.server.state import AppState
         state = AppState(config)
         await state.start()
         try:
-            state.open_project("dup")
-            with pytest.raises(ValueError, match="already exists"):
-                state.open_project("dup")
+            p1, created1 = await state.open_project("dup")
+            p2, created2 = await state.open_project("dup")
+            assert created1 is True
+            assert created2 is False
+            assert p1 is p2
         finally:
             await state.shutdown()
 
@@ -222,7 +226,7 @@ class TestAppState:
         state = AppState(config)
         await state.start()
         try:
-            p = state.open_project("abc")
+            p, _ = await state.open_project("abc")
             assert state.resolve_project("abc") is p
             with pytest.raises(KeyError):
                 state.resolve_project("nonexistent")
@@ -235,7 +239,7 @@ class TestAppState:
         state = AppState(config)
         await state.start()
         try:
-            p = state.open_project("del-me")
+            p, _ = await state.open_project("del-me")
             work_dir = p.work_dir
             assert os.path.isdir(work_dir)
             await state.close_project("del-me")
@@ -260,8 +264,8 @@ class TestAppState:
         from ramune_ida.server.state import AppState
         state = AppState(config)
         await state.start()
-        state.open_project("proj-a")
-        state.open_project("proj-b")
+        await state.open_project("proj-a")
+        await state.open_project("proj-b")
         await state.shutdown()
 
         state2 = AppState(config)
@@ -358,7 +362,7 @@ class TestServerConfig:
         assert cfg.hard_limit == 8
 
     def test_resolved_work_base_dir(self):
-        cfg = ServerConfig(work_base_dir="~/test-dir")
+        cfg = ServerConfig(data_dir="~/test-dir")
         assert "~" not in cfg.resolved_work_base_dir
 
 

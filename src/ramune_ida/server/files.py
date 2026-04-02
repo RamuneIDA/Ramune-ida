@@ -35,9 +35,12 @@ async def upload_to_project(request: Request) -> Response:
     project_id = request.path_params["project_id"]
     project = state.projects.get(project_id)
     if project is None:
-        return JSONResponse(
-            {"error": f"Unknown project: {project_id}"}, status_code=404
-        )
+        try:
+            project, _ = await state.open_project(project_id)
+        except ValueError:
+            return JSONResponse(
+                {"error": f"Invalid project_id: {project_id}"}, status_code=400
+            )
 
     form = await request.form()
     upload = form.get("file")

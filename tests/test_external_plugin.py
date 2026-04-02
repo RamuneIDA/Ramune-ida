@@ -72,7 +72,7 @@ async def mcp(tmp_path):
         soft_limit=2,
         hard_limit=4,
         auto_save_interval=0,
-        work_base_dir=str(tmp_path / "projects"),
+        data_dir=str(tmp_path),
     )
     app_module.configure(config)
 

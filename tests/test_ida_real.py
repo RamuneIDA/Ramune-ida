@@ -44,7 +44,7 @@ async def mcp_ida(tmp_path):
         soft_limit=0,
         hard_limit=2,
         auto_save_interval=0,
-        work_base_dir=str(tmp_path / "projects"),
+        data_dir=str(tmp_path),
     )
 
     os.environ["IDADIR"] = IDA_DIR

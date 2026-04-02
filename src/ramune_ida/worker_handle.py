@@ -82,6 +82,7 @@ class WorkerHandle:
             parent_sock.setblocking(False)
             self._reader, self._writer = await asyncio.open_connection(
                 sock=parent_sock,
+                limit=16 * 1024 * 1024,  # 16 MiB — large decompiled functions easily exceed the 64 KiB default
             )
 
             ready = await self._recv()

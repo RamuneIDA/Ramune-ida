@@ -33,9 +33,14 @@ async def open_project(
     project_id: str | None = None,
 ) -> dict:
     state = get_state()
-    project = state.open_project(project_id)
+    project, created = await state.open_project(project_id)
     pid = project.project_id
     result: dict[str, Any] = {"project_id": pid}
+    if not created:
+        result["notice"] = (
+            f"Project '{pid}' already exists (reusing). "
+            f"Use a different ID to create a new project."
+        )
     base = request_base_url.get("")
     if base:
         result["upload"] = f"{base}/files/{pid}"

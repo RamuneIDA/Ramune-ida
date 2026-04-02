@@ -38,7 +38,7 @@ async def main():
     config = ServerConfig(
         worker_python=sys.executable,
         soft_limit=0, hard_limit=0, auto_save_interval=0,
-        work_base_dir="/tmp/ramune-demo",
+        data_dir="/tmp/ramune-demo",
         output_max_length=5000,
     )
     app_module.configure(config)

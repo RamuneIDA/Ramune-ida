@@ -84,7 +84,7 @@ async def mcp_app(tmp_path):
         soft_limit=2,
         hard_limit=4,
         auto_save_interval=0,
-        work_base_dir=str(tmp_path / "projects"),
+        data_dir=str(tmp_path),
     )
     app_module.configure(config)
 
@@ -192,10 +192,12 @@ async def test_open_project_invalid_id(mcp_app):
 
 
 @pytest.mark.asyncio
-async def test_open_project_duplicate_id(mcp_app):
-    await call(mcp_app, "open_project", {"project_id": "dup"})
-    with pytest.raises(Exception):
-        await call(mcp_app, "open_project", {"project_id": "dup"})
+async def test_open_project_idempotent(mcp_app):
+    r1 = await call(mcp_app, "open_project", {"project_id": "dup"})
+    r2 = await call(mcp_app, "open_project", {"project_id": "dup"})
+    assert r1["project_id"] == r2["project_id"]
+    assert "notice" not in r1
+    assert "notice" in r2
 
 
 # ── open_database ─────────────────────────────────────────────────
@@ -378,7 +380,7 @@ async def test_restart_recovery(tmp_path):
         soft_limit=0,
         hard_limit=0,
         auto_save_interval=0,
-        work_base_dir=str(tmp_path / "projects"),
+        data_dir=str(tmp_path),
     )
     app_module.configure(config)
 
@@ -700,12 +702,10 @@ async def test_list_funcs_with_filter(mcp_app):
     r = await call(mcp, "list_funcs", {
         "project_id": pid,
         "filter": "main",
-        "offset": 10,
-        "count": 50,
+        "exclude": "sub",
     })
     assert r["params"]["filter"] == "main"
-    assert r["params"]["offset"] == 10
-    assert r["params"]["count"] == 50
+    assert r["params"]["exclude"] == "sub"
 
 
 # ── list_strings ──────────────────────────────────────────────────

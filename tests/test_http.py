@@ -30,7 +30,7 @@ async def state(tmp_path):
         soft_limit=0,
         hard_limit=0,
         auto_save_interval=0,
-        work_base_dir=str(tmp_path / "projects"),
+        data_dir=str(tmp_path),
     )
     app_module.configure(config)
 
@@ -55,10 +55,10 @@ def sse_asgi(state):
     return app_module.mcp.sse_app()
 
 
-@pytest.fixture
-def project_with_file(state, tmp_path):
+@pytest_asyncio.fixture
+async def project_with_file(state, tmp_path):
     """Create a project and put a file in its work_dir."""
-    project = state.open_project("file-test")
+    project, _ = await state.open_project("file-test")
     content = b"hello binary world"
     filepath = os.path.join(project.work_dir, "sample.bin")
     with open(filepath, "wb") as f:
@@ -90,7 +90,7 @@ async def test_sse_app_reachable(sse_asgi):
 
 @pytest.mark.asyncio
 async def test_upload_file(http_app, state):
-    project = state.open_project("upload-test")
+    project, _ = await state.open_project("upload-test")
     transport = httpx.ASGITransport(app=http_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
@@ -106,19 +106,21 @@ async def test_upload_file(http_app, state):
 
 
 @pytest.mark.asyncio
-async def test_upload_unknown_project(http_app):
+async def test_upload_auto_creates_project(http_app, state):
+    """Upload to a non-existent project auto-creates it."""
     transport = httpx.ASGITransport(app=http_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
-            "/files/nonexistent",
+            "/files/auto-created",
             files={"file": ("x.bin", b"\x00", "application/octet-stream")},
         )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert "auto-created" in state.projects
 
 
 @pytest.mark.asyncio
 async def test_upload_missing_file_field(http_app, state):
-    project = state.open_project("upload-nofield")
+    project, _ = await state.open_project("upload-nofield")
     transport = httpx.ASGITransport(app=http_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
@@ -151,7 +153,7 @@ async def test_download_unknown_project(http_app):
 
 @pytest.mark.asyncio
 async def test_download_missing_file(http_app, state):
-    project = state.open_project("dl-missing")
+    project, _ = await state.open_project("dl-missing")
     transport = httpx.ASGITransport(app=http_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get(f"/files/{project.project_id}/no-such-file.bin")
@@ -172,7 +174,7 @@ async def test_download_path_traversal(http_app, project_with_file):
 
 @pytest.mark.asyncio
 async def test_upload_download_roundtrip(http_app, state):
-    project = state.open_project("roundtrip")
+    project, _ = await state.open_project("roundtrip")
     payload = os.urandom(1024)
 
     transport = httpx.ASGITransport(app=http_app)
@@ -193,7 +195,7 @@ async def test_upload_download_roundtrip(http_app, state):
 
 @pytest.mark.asyncio
 async def test_download_nested_path(http_app, state):
-    project = state.open_project("nested")
+    project, _ = await state.open_project("nested")
     subdir = os.path.join(project.work_dir, "outputs")
     os.makedirs(subdir)
     with open(os.path.join(subdir, "result.txt"), "w") as f:
