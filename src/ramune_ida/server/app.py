@@ -12,6 +12,7 @@ Results without a ``project_id`` are returned as-is (no truncation).
 
 from __future__ import annotations
 
+import contextvars
 import inspect
 import os
 from contextlib import asynccontextmanager
@@ -27,6 +28,10 @@ from ramune_ida.server.state import AppState
 
 _config: ServerConfig | None = None
 _state: AppState | None = None
+
+request_base_url: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_base_url", default=""
+)
 
 
 def configure(config: ServerConfig) -> None:
@@ -78,11 +83,9 @@ Concepts:
 - database: an IDA database opened inside a project via open_database().
 - project_id: returned by open_project(), required by all other tools.
 
-File transfer: server and client do not share a filesystem.
-Upload and download share the same base URL as the MCP endpoint.
-  Upload:   POST <mcp_url>/files/{project_id}  (multipart form, field name "file")
-  Download: GET  <mcp_url>/files/{project_id}/{filename}
-  Example:  curl -F file=@./binary <mcp_url>/files/{project_id}
+File transfer: open_project returns upload/download endpoint URLs.
+  Upload:   POST {upload_url} (multipart form, field "file")
+  Download: GET  {download_url}
 open_database path is relative to work_dir — just use the filename you uploaded.
 
 Workflow: open_project → upload binary → open_database → analyze → close_project.

@@ -108,8 +108,41 @@ def main() -> None:
         mcp.settings.transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
         )
+
+    import uvicorn
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    from ramune_ida.server.app import request_base_url
+
+    class _HostCapture:
+        """ASGI middleware that captures Host header into a ContextVar."""
+
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "http":
+                for k, v in scope.get("headers", []):
+                    if k == b"host":
+                        tok = request_base_url.set(f"http://{v.decode()}")
+                        try:
+                            return await self.app(scope, receive, send)
+                        finally:
+                            request_base_url.reset(tok)
+            await self.app(scope, receive, send)
+
+    if transport == "streamable-http":
+        asgi_app = mcp.streamable_http_app()
+    else:
+        asgi_app = mcp.sse_app()
+
     try:
-        mcp.run(transport=transport)
+        uvicorn.run(
+            _HostCapture(asgi_app),
+            host=host,
+            port=port,
+            log_level=mcp.settings.log_level.lower(),
+        )
     except KeyboardInterrupt:
         pass
 

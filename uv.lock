@@ -707,18 +707,14 @@ wheels = [
 
 [[package]]
 name = "ramune-ida"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
+    { name = "idapro" },
     { name = "mcp" },
     { name = "orjson" },
     { name = "pydantic" },
     { name = "starlette" },
-]
-
-[package.optional-dependencies]
-worker = [
-    { name = "idapro" },
 ]
 
 [package.dev-dependencies]
@@ -729,13 +725,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "idapro", marker = "extra == 'worker'", specifier = ">=0.0.7" },
+    { name = "idapro", specifier = ">=0.0.7" },
     { name = "mcp", specifier = ">=1.8.0" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "starlette", specifier = ">=0.37" },
 ]
-provides-extras = ["worker"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -15,10 +15,10 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /opt/ramune-ida
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --no-install-project --extra worker
+RUN uv sync --no-install-project
 
 COPY src/ src/
-RUN uv sync --extra worker
+RUN uv sync
 
 EXPOSE 8000
 

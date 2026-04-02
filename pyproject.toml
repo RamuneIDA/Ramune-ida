@@ -10,6 +10,7 @@ dependencies = [
     "orjson>=3.10",
     "pydantic>=2.0",
     "starlette>=0.37",
+    "idapro>=0.0.7",
 ]
 requires-python = ">=3.10"
 readme = "README.md"
@@ -21,9 +22,6 @@ ramune-ida = "ramune_ida.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[project.optional-dependencies]
-worker = ["idapro>=0.0.7"]
 
 [dependency-groups]
 dev = [

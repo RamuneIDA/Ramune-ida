@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from ramune_ida.commands import CloseDatabase, PluginInvocation, Ping
-from ramune_ida.server.app import get_state
+from ramune_ida.server.app import get_state, request_base_url
 
 
 def _rel(path: str | None, work_dir: str) -> str | None:
@@ -34,9 +34,14 @@ async def open_project(
 ) -> dict:
     state = get_state()
     project = state.open_project(project_id)
-    return {
-        "project_id": project.project_id,
-    }
+    pid = project.project_id
+    result: dict[str, Any] = {"project_id": pid}
+    base = request_base_url.get("")
+    if base:
+        result["upload"] = f"{base}/files/{pid}"
+        result["download"] = f"{base}/files/{pid}/{{filename}}"
+        result["curl_upload"] = f"curl -F file=@./FILENAME {base}/files/{pid}"
+    return result
 
 
 async def close_project(
