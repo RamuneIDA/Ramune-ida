@@ -162,6 +162,7 @@ cython_debug/
 #.idea/
 
 .history/
+.claude/
 
 # Web UI
 web-ui/node_modules/
