@@ -162,6 +162,11 @@ cython_debug/
 #.idea/
 
 .history/
+
+# Web UI
+web-ui/node_modules/
+web-ui/dist/
+src/ramune_ida/web/frontend/
 tests/ch*
 tests/binary/
 *.i64

@@ -52,6 +52,12 @@ def get_state() -> AppState:
 @asynccontextmanager
 async def _lifespan(_server: FastMCP) -> AsyncIterator[dict]:
     global _state
+
+    if _state is not None:
+        # Already initialised (e.g. by the web module's startup).
+        yield {}
+        return
+
     assert _config is not None, "Call configure() before starting the server"
 
     if _config.plugins_enabled:
@@ -71,6 +77,28 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[dict]:
     finally:
         await state.shutdown()
         _state = None
+
+
+async def ensure_state() -> AppState:
+    """Initialise AppState if not already done.  Called by the web module."""
+    global _state
+    if _state is not None:
+        return _state
+    assert _config is not None, "Call configure() before ensure_state()"
+
+    if _config.plugins_enabled:
+        from ramune_ida.server.plugins import discover_tools, register_plugin_tools
+
+        tools_meta = await discover_tools(
+            _config.worker_python,
+            plugin_dir=_config.resolved_plugin_dir,
+        )
+        register_plugin_tools(tools_meta)
+
+    state = AppState(_config)
+    await state.start()
+    _state = state
+    return state
 
 
 # FastMCP instance -----------------------------------------------------------

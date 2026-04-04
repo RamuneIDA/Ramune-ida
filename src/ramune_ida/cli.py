@@ -76,11 +76,15 @@ def main() -> None:
         "--output-max-length", type=int, default=20_000,
         help="Truncate tool output beyond this many chars (default: 20000)",
     )
+    parser.add_argument(
+        "--web", action="store_true",
+        help="Enable Web UI (served on the same port)",
+    )
 
     args = parser.parse_args()
 
     from ramune_ida.config import ServerConfig
-    from ramune_ida.server.app import configure, mcp
+    from ramune_ida.server.app import configure, get_state, mcp
 
     config = ServerConfig(
         worker_python=args.worker_python,
@@ -135,6 +139,14 @@ def main() -> None:
         asgi_app = mcp.streamable_http_app()
     else:
         asgi_app = mcp.sse_app()
+
+    if args.web:
+        from ramune_ida.web.app import create_combined_app
+        asgi_app = create_combined_app(
+            mcp_app=asgi_app,
+            get_state=get_state,
+            dev_mode=bool(os.environ.get("RAMUNE_WEB_DEV")),
+        )
 
     try:
         uvicorn.run(

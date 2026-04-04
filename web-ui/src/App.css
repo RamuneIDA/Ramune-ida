@@ -1,0 +1,120 @@
+/* rc-dock theme overrides — IDA dark theme (Catppuccin) */
+
+/* ── Global ────────────────────────────────────────────────────── */
+
+.dock-layout {
+  font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+}
+
+/* ── Panels ────────────────────────────────────────────────────── */
+
+.dock-panel {
+  background: var(--bg-primary) !important;
+  border-color: var(--border) !important;
+}
+
+/* ── Tab bar ───────────────────────────────────────────────────── */
+
+.dock-bar {
+  background: var(--bg-header) !important;
+}
+
+.dock-tab-btn {
+  color: var(--text-muted) !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+}
+
+.dock-tab-btn:hover {
+  color: var(--text-secondary) !important;
+}
+
+.dock-tab-active > .dock-tab-btn {
+  color: var(--accent) !important;
+}
+
+.dock-ink-bar {
+  background: var(--accent) !important;
+}
+
+/* ── Tab content ───────────────────────────────────────────────── */
+
+.dock-tabpane {
+  background: var(--bg-primary);
+}
+
+/* ── Dividers ──────────────────────────────────────────────────── */
+
+.dock-divider {
+  flex: 0 0 2px !important;
+  background: var(--border) !important;
+}
+
+.dock-hbox > .dock-divider {
+  transform: scaleX(1) !important;
+}
+
+.dock-vbox > .dock-divider {
+  transform: scaleY(1) !important;
+}
+
+.dock-divider:hover {
+  background: var(--accent) !important;
+}
+
+/* ── Drop indicator ────────────────────────────────────────────── */
+
+.dock-drop-indicator {
+  background: rgba(137, 180, 250, 0.15) !important;
+  border: 2px solid var(--accent) !important;
+}
+
+/* ── Floating panels ───────────────────────────────────────────── */
+
+.dock-panel-float {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* ── Extra buttons (maximize, more tabs, etc.) ─────────────────── */
+
+.dock-extra-content,
+.dock-nav-more {
+  color: var(--text-muted) !important;
+}
+
+.dock-extra-content:hover,
+.dock-nav-more:hover {
+  color: var(--text-primary) !important;
+}
+
+/* ── Nav operations (overflow dropdown) ─────────────────────────── */
+
+.dock-dropdown {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.dock-dropdown .dock-dropdown-menu-item {
+  color: var(--text-primary) !important;
+}
+
+.dock-dropdown .dock-dropdown-menu-item:hover {
+  background: var(--bg-hover) !important;
+}
+
+/* ── Panel header (maximize button area) ───────────────────────── */
+
+.dock-panel-max-btn {
+  color: var(--text-muted) !important;
+}
+
+.dock-panel-max-btn:hover {
+  color: var(--text-primary) !important;
+}
+
+/* ── Ensure panel content fills available space ────────────────── */
+
+.dock-tabpane > div > .panel {
+  height: 100%;
+}
