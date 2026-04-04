@@ -3,84 +3,217 @@ import { linearView } from "../api/client";
 import { useProjectStore } from "../stores/projectStore";
 import { useViewStore } from "../stores/viewStore";
 import { highlightOps } from "../utils/highlightAsm";
+import { isNavigable } from "../utils/codeNav";
 import { ChannelBadge } from "../components/ChannelBadge";
 import type { LinearLine } from "../api/types";
 
 const CHUNK_SIZE = 150;
-const LOAD_THRESHOLD = 200;
+const LOAD_THRESHOLD = 300; // px from edge
+const MAX_LINES = 3000;     // GC threshold: clear and rebuild
 
 export function LinearView({ tabId = "idaview" }: { tabId?: string }) {
   const { activeProjectId } = useProjectStore();
   const store = useViewStore();
   const ch = store.getTabChannel(tabId);
   const channel = store.getChannel(ch);
-  const { highlightToken, highlightDisasmAddrs, funcData } = channel;
+  const { highlightToken, highlightDisasmAddrs, targetAddr, funcData } = channel;
 
   const [lines, setLines] = useState<LinearLine[]>([]);
   const [loading, setLoading] = useState(false);
-  const [nextAddr, setNextAddr] = useState<string | null>(null);
+  const [hasMoreTop, setHasMoreTop] = useState(true);
+  const [hasMoreBottom, setHasMoreBottom] = useState(true);
   const [addrInput, setAddrInput] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
 
   const activate = useCallback(() => store.setActiveChannel(ch), [store, ch]);
 
-  const loadFrom = useCallback(
+  // ── Core load functions ────────────────────────────────────
+
+  /** Load forward from addr, replace or append */
+  const loadForward = useCallback(
     async (addr: string, append = false) => {
       if (!activeProjectId || loadingRef.current) return;
       loadingRef.current = true;
       setLoading(true);
       try {
-        const data = await linearView(activeProjectId, addr, CHUNK_SIZE);
+        const data = await linearView(activeProjectId, addr, CHUNK_SIZE, "forward");
         if (append) {
-          setLines((prev) => [...prev, ...data.lines]);
+          setLines((prev) => {
+            // Deduplicate by addr
+            const existing = new Set(prev.map((l) => l.addr).filter(Boolean));
+            const newLines = data.lines.filter((l) => !l.addr || !existing.has(l.addr));
+            return [...prev, ...newLines];
+          });
         } else {
           setLines(data.lines);
+          setHasMoreTop(true);
         }
-        setNextAddr(data.next);
+        setHasMoreBottom(data.has_more);
       } catch { /* ignore */ }
-      finally {
-        setLoading(false);
-        loadingRef.current = false;
-      }
+      finally { setLoading(false); loadingRef.current = false; }
     },
     [activeProjectId],
   );
 
+  /** Load backward from addr, prepend */
+  const loadBackward = useCallback(
+    async (addr: string) => {
+      if (!activeProjectId || loadingRef.current) return;
+      loadingRef.current = true;
+      setLoading(true);
+      try {
+        const data = await linearView(activeProjectId, addr, CHUNK_SIZE, "backward");
+        if (data.lines.length > 0) {
+          const el = containerRef.current;
+          const prevScrollHeight = el?.scrollHeight || 0;
+          const prevScrollTop = el?.scrollTop || 0;
+
+          setLines((prev) => {
+            const existing = new Set(prev.map((l) => l.addr).filter(Boolean));
+            const newLines = data.lines.filter((l) => !l.addr || !existing.has(l.addr));
+            return [...newLines, ...prev];
+          });
+
+          // Fix scroll position after prepend
+          requestAnimationFrame(() => {
+            if (el) {
+              el.scrollTop = prevScrollTop + (el.scrollHeight - prevScrollHeight);
+            }
+          });
+        }
+        setHasMoreTop(data.has_more);
+      } catch { /* ignore */ }
+      finally { setLoading(false); loadingRef.current = false; }
+    },
+    [activeProjectId],
+  );
+
+  /** Jump to addr: clear everything, load forward + backward around target */
+  const jumpTo = useCallback(
+    async (addr: string) => {
+      if (!activeProjectId) return;
+      // GC: clear existing data
+      setLines([]);
+      setHasMoreTop(true);
+      setHasMoreBottom(true);
+      loadingRef.current = false;
+
+      // Load forward from addr
+      loadingRef.current = true;
+      setLoading(true);
+      try {
+        // Load forward
+        const fwd = await linearView(activeProjectId, addr, CHUNK_SIZE, "forward");
+        // Load backward
+        const bwd = await linearView(activeProjectId, addr, CHUNK_SIZE / 2, "backward");
+
+        // Merge: backward lines (excluding addr itself) + forward lines
+        const fwdAddrs = new Set(fwd.lines.map((l) => l.addr).filter(Boolean));
+        const bwdFiltered = bwd.lines.filter((l) => !l.addr || !fwdAddrs.has(l.addr));
+
+        setLines([...bwdFiltered, ...fwd.lines]);
+        setHasMoreTop(bwd.has_more);
+        setHasMoreBottom(fwd.has_more);
+      } catch { /* ignore */ }
+      finally { setLoading(false); loadingRef.current = false; }
+
+      // Scroll to target after render
+      requestAnimationFrame(() => {
+        containerRef.current
+          ?.querySelector(`[data-addr="${addr}"]`)
+          ?.scrollIntoView({ block: "center", behavior: "auto" });
+      });
+    },
+    [activeProjectId],
+  );
+
+  // ── Initial load ───────────────────────────────────────────
+
   useEffect(() => {
     if (!activeProjectId) { setLines([]); return; }
-    loadFrom("0x0");
-  }, [activeProjectId, loadFrom]);
+    jumpTo("0x0");
+  }, [activeProjectId]); // eslint-disable-line
 
-  // Sync: scroll to highlighted addr, load if needed
+  // ── Sync: follow targetAddr ────────────────────────────────
+
+  useEffect(() => {
+    if (!targetAddr) return;
+    const el = containerRef.current?.querySelector(`[data-addr="${targetAddr}"]`);
+    if (el) {
+      // Already loaded — check if visible
+      const rect = el.getBoundingClientRect();
+      const cRect = containerRef.current!.getBoundingClientRect();
+      if (rect.top < cRect.top || rect.bottom > cRect.bottom) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    } else {
+      // Not loaded — jump (clear + reload around target)
+      jumpTo(targetAddr);
+    }
+  }, [targetAddr]); // eslint-disable-line
+
+  // ── Sync: follow highlight ─────────────────────────────────
+
   useEffect(() => {
     if (highlightDisasmAddrs.length === 0 || !containerRef.current) return;
     const addr = highlightDisasmAddrs[0];
     const el = containerRef.current.querySelector(`[data-addr="${addr}"]`);
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    } else {
-      loadFrom(addr).then(() => {
-        requestAnimationFrame(() => {
-          containerRef.current
-            ?.querySelector(`[data-addr="${addr}"]`)
-            ?.scrollIntoView({ block: "center", behavior: "smooth" });
-        });
-      });
+      const rect = el.getBoundingClientRect();
+      const cRect = containerRef.current.getBoundingClientRect();
+      if (rect.top < cRect.top || rect.bottom > cRect.bottom) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
     }
-  }, [highlightDisasmAddrs, loadFrom]);
+    // Don't jumpTo on highlight — only on navigate
+  }, [highlightDisasmAddrs]);
+
+  // ── Scroll handler ─────────────────────────────────────────
 
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
-    if (!el || !nextAddr || loadingRef.current) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < LOAD_THRESHOLD) {
-      loadFrom(nextAddr, true);
+    if (!el || loadingRef.current) return;
+
+    // GC: if too many lines, jump to current center
+    if (lines.length > MAX_LINES) {
+      const centerIdx = Math.floor(lines.length / 2);
+      const centerAddr = lines[centerIdx]?.addr;
+      if (centerAddr) {
+        jumpTo(centerAddr);
+        return;
+      }
     }
-  }, [nextAddr, loadFrom]);
+
+    const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const distTop = el.scrollTop;
+
+    // Near bottom — load more forward
+    if (hasMoreBottom && distBottom < LOAD_THRESHOLD) {
+      const lastAddr = lines[lines.length - 1]?.addr;
+      if (lastAddr) {
+        // Find boundary: next addr after last line
+        const lastNum = parseInt(lastAddr, 16);
+        const lastSize = lines[lines.length - 1]?.size || 1;
+        const nextAddr = `0x${(lastNum + lastSize).toString(16)}`;
+        loadForward(nextAddr, true);
+      }
+    }
+
+    // Near top — load more backward
+    if (hasMoreTop && distTop < LOAD_THRESHOLD) {
+      const firstAddr = lines.find((l) => l.addr)?.addr;
+      if (firstAddr) {
+        loadBackward(firstAddr);
+      }
+    }
+  }, [lines, hasMoreTop, hasMoreBottom, loadForward, loadBackward, jumpTo]);
+
+  // ── Navigation ─────────────────────────────────────────────
 
   const handleGo = useCallback(() => {
-    if (addrInput) { loadFrom(addrInput); setAddrInput(""); }
-  }, [addrInput, loadFrom]);
+    if (addrInput) { jumpTo(addrInput); setAddrInput(""); }
+  }, [addrInput, jumpTo]);
 
   const handleClick = useCallback(
     (line: LinearLine, e: React.MouseEvent) => {
@@ -88,7 +221,7 @@ export function LinearView({ tabId = "idaview" }: { tabId?: string }) {
       const target = (e.target as HTMLElement).getAttribute?.("data-token");
 
       if (e.detail === 2) {
-        if (target && activeProjectId) {
+        if (target && activeProjectId && isNavigable(target)) {
           store.navigateTo(ch, activeProjectId, target);
         }
         return;
@@ -110,6 +243,8 @@ export function LinearView({ tabId = "idaview" }: { tabId?: string }) {
     },
     [store, ch, activeProjectId, highlightToken, funcData, activate],
   );
+
+  // ── Render ─────────────────────────────────────────────────
 
   return (
     <div className="panel linear-panel" onMouseDown={activate}>
@@ -150,6 +285,8 @@ export function LinearView({ tabId = "idaview" }: { tabId?: string }) {
     </div>
   );
 }
+
+// ── Line rendering ──────────────────────────────────────────────
 
 function LinearLineRow({
   line, highlightToken, isAddrHighlighted, onClick,

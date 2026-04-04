@@ -18,20 +18,22 @@ export function StringList() {
   const [loading, setLoading] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!activeProjectId) {
-      setStrings([]);
-      return;
-    }
-    setLoading(true);
+  const fetchStrings = useCallback((initial = false) => {
+    if (!activeProjectId) return;
+    if (initial) setLoading(true);
     listStrings(activeProjectId)
       .then((res) => {
         const strs = ((res as Record<string, unknown>).items ?? (res as Record<string, unknown>).strings) as StringEntry[] || [];
         setStrings(strs);
       })
-      .catch(() => setStrings([]))
+      .catch(() => { if (initial) setStrings([]); })
       .finally(() => setLoading(false));
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) { setStrings([]); return; }
+    fetchStrings(true);
+  }, [activeProjectId, fetchStrings]);
 
   const filtered = useMemo(() => {
     if (!filter) return strings;
@@ -60,7 +62,7 @@ export function StringList() {
   );
 
   return (
-    <div className="panel string-panel">
+    <div className="panel string-panel" onFocus={() => fetchStrings()} tabIndex={-1}>
       <div className="panel-header">
         <span>Strings ({filtered.length})</span>
       </div>

@@ -1,7 +1,57 @@
 /**
- * Lightweight C pseudocode syntax highlighter.
- * Each token gets a data-token attribute for click-to-highlight.
+ * Render tokens from tree-sitter parser into highlighted React nodes.
+ * Also provides a regex fallback for when parser isn't ready.
  */
+
+import type { Token, TokenType } from "./cParser";
+
+const TYPE_CSS: Record<TokenType, string> = {
+  keyword: "hl-kw",
+  type: "hl-kw",       // types use same color as keywords
+  function: "hl-func",
+  identifier: "hl-ident",
+  number: "hl-num",
+  string: "hl-str",
+  comment: "hl-comment",
+  operator: "hl-punct",
+  space: "",
+  unknown: "",
+};
+
+/**
+ * Render a token array into React elements with highlighting + token click support.
+ */
+export function renderTokens(
+  tokens: Token[],
+  highlightToken: string | null,
+): React.ReactNode[] {
+  return tokens.map((tok, i) => {
+    if (tok.type === "space") {
+      return tok.text;
+    }
+
+    const cls = TYPE_CSS[tok.type] || "";
+    const isActive = highlightToken !== null && tok.text === highlightToken;
+    const needsSpan = cls || tok.navigable || isActive;
+
+    if (!needsSpan) {
+      return tok.text;
+    }
+
+    return (
+      <span
+        key={i}
+        className={`${cls}${isActive ? " token-hl" : ""}${tok.navigable ? " nav-token" : ""}`}
+        data-token={tok.text}
+        data-navigable={tok.navigable ? "1" : undefined}
+      >
+        {tok.text}
+      </span>
+    );
+  });
+}
+
+// ── Regex fallback (for when parser isn't loaded yet) ─────────
 
 const C_KEYWORDS = new Set([
   "auto", "break", "case", "char", "const", "continue", "default", "do",
@@ -17,27 +67,9 @@ const C_KEYWORDS = new Set([
 const TOKEN_RE =
   /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b0x[0-9A-Fa-f]+\b|\b\d+\b)|(\b[A-Za-z_]\w*\b)|(\/\/.*$)|([^\w\s"']+)/g;
 
-function tok(
-  key: number,
-  cls: string,
+export function highlightCFallback(
   text: string,
-  activeToken: string | null,
-): React.ReactElement {
-  const isActive = activeToken !== null && text === activeToken;
-  return (
-    <span
-      key={key}
-      className={`${cls}${isActive ? " token-hl" : ""}`}
-      data-token={text}
-    >
-      {text}
-    </span>
-  );
-}
-
-export function highlightC(
-  text: string,
-  activeToken: string | null = null,
+  highlightToken: string | null,
 ): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -50,22 +82,21 @@ export function highlightC(
     }
 
     const [full, str, num, ident, comment] = match;
+    const isActive = highlightToken !== null && full === highlightToken;
+    const hlCls = isActive ? " token-hl" : "";
 
     if (str) {
-      parts.push(tok(match.index, "hl-str", full, activeToken));
+      parts.push(<span key={match.index} className={`hl-str${hlCls}`} data-token={full}>{full}</span>);
     } else if (comment) {
-      parts.push(tok(match.index, "hl-comment", full, null));
+      parts.push(<span key={match.index} className="hl-comment">{full}</span>);
     } else if (num) {
-      parts.push(tok(match.index, "hl-num", full, activeToken));
+      parts.push(<span key={match.index} className={`hl-num${hlCls}`} data-token={full}>{full}</span>);
     } else if (ident) {
-      const cls = C_KEYWORDS.has(ident)
-        ? "hl-kw"
-        : ident.startsWith("sub_") || ident.startsWith("loc_")
-          ? "hl-func"
-          : "hl-ident";
-      parts.push(tok(match.index, cls, full, activeToken));
+      const cls = C_KEYWORDS.has(ident) ? "hl-kw"
+        : ident.startsWith("sub_") || ident.startsWith("loc_") ? "hl-func"
+        : "hl-ident";
+      parts.push(<span key={match.index} className={`${cls}${hlCls}`} data-token={full}>{full}</span>);
     } else {
-      // punctuation — not clickable
       parts.push(<span key={match.index} className="hl-punct">{full}</span>);
     }
 

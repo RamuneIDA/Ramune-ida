@@ -67,10 +67,22 @@ export interface LinearLine {
 }
 
 export interface LinearViewData {
-  start: string;
-  next: string | null;
-  count: number;
   lines: LinearLine[];
+  has_more: boolean;
+  boundary_addr: string | null;
+}
+
+// resolve result
+export interface ResolveResult {
+  type: "function" | "code" | "data" | "string" | "unknown";
+  addr?: string;
+  name?: string | null;
+  func_name?: string;
+  func_addr?: string;
+  size?: number;
+  value?: string;
+  target?: string;
+  error?: string;
 }
 
 export interface ActivityEvent {

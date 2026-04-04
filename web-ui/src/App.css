@@ -38,6 +38,22 @@
   background: var(--accent) !important;
 }
 
+/* ── Tab bar: wrap instead of scroll ────────────────────────────── */
+
+.dock-bar {
+  overflow: visible !important;
+  height: auto !important;
+}
+
+.dock-nav-list {
+  flex-wrap: wrap !important;
+}
+
+.dock-nav-operations,
+.dock-nav-more {
+  display: none !important;
+}
+
 /* ── Tab content ───────────────────────────────────────────────── */
 
 .dock-tabpane {

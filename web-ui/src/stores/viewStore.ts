@@ -1,18 +1,29 @@
 import { create } from "zustand";
-import { funcView } from "../api/client";
-import type { FuncViewData } from "../api/types";
+import { funcView, resolveTarget } from "../api/client";
+import type { FuncViewData, ResolveResult } from "../api/types";
 
 // ── Channel state ───────────────────────────────────────────────
 
 export interface ChannelState {
+  // Current function view
   currentFunc: string | null;
   funcName: string | null;
   funcData: FuncViewData | null;
   loading: boolean;
   error: string | null;
+
+  // Current target address (for IDA View / Hex View to follow)
+  targetAddr: string | null;
+
+  // Last resolve result
+  lastResolve: ResolveResult | null;
+
+  // Sync highlights
   highlightDecompileLines: number[];
   highlightDisasmAddrs: string[];
   highlightToken: string | null;
+
+  // Navigation history
   history: string[];
   historyIndex: number;
   _cache: Map<string, FuncViewData>;
@@ -25,6 +36,8 @@ function emptyChannel(): ChannelState {
     funcData: null,
     loading: false,
     error: null,
+    targetAddr: null,
+    lastResolve: null,
     highlightDecompileLines: [],
     highlightDisasmAddrs: [],
     highlightToken: null,
@@ -58,6 +71,8 @@ interface ViewStore {
   setHighlightToken: (ch: string, token: string | null) => void;
   clearHighlight: (ch: string) => void;
   clear: (ch: string) => void;
+  saveSession: () => void;
+  restoreSession: (projectId: string) => void;
   clearAll: () => void;
 }
 
@@ -97,72 +112,118 @@ export const useViewStore = create<ViewStore>((set, get) => ({
     });
   },
 
-  navigateTo: (ch: string, projectId: string, func: string) => {
+  navigateTo: (ch: string, projectId: string, target: string) => {
     const state = get();
     const channel = state.channels[ch] || emptyChannel();
 
+    // Update history
     const newHistory = channel.history.slice(0, channel.historyIndex + 1);
-    newHistory.push(func);
-
-    const updated: ChannelState = {
-      ...channel,
-      currentFunc: func,
-      funcName: null,
-      funcData: null,
-      loading: true,
-      error: null,
-      highlightDecompileLines: [],
-      highlightDisasmAddrs: [],
-      history: newHistory,
-      historyIndex: newHistory.length - 1,
-    };
+    newHistory.push(target);
 
     set((s) => ({
-      channels: { ...s.channels, [ch]: updated },
+      channels: {
+        ...s.channels,
+        [ch]: {
+          ...channel,
+          loading: true,
+          error: null,
+          highlightDecompileLines: [],
+          highlightDisasmAddrs: [],
+          history: newHistory,
+          historyIndex: newHistory.length - 1,
+        },
+      },
       activeChannel: ch,
     }));
 
-    const cacheKey = `${projectId}:${func}`;
-    const cached = channel._cache.get(cacheKey);
-    if (cached) {
+    const update = (patch: Partial<ChannelState>) => {
       set((s) => ({
         channels: {
           ...s.channels,
-          [ch]: { ...s.channels[ch], funcData: cached, funcName: cached.func.name, loading: false },
+          [ch]: { ...s.channels[ch], ...patch },
         },
       }));
-      return;
-    }
+      // Auto-save session when function changes
+      if (patch.currentFunc !== undefined || patch.funcData !== undefined) {
+        setTimeout(() => get().saveSession(), 0);
+      }
+    };
 
-    funcView(projectId, func)
-      .then((data) => {
-        const cache = get().channels[ch]?._cache || new Map();
-        if (cache.size > 30) {
-          const first = cache.keys().next().value;
-          if (first) cache.delete(first);
+    // Step 1: resolve the target
+    resolveTarget(projectId, target)
+      .then((resolved) => {
+        update({ lastResolve: resolved, targetAddr: resolved.addr || null });
+
+        // Step 2: decide what to do based on type
+        const funcAddr = resolved.type === "function"
+          ? resolved.addr
+          : resolved.func_addr;
+
+        if (!funcAddr) {
+          // Not in a function (data, string, unknown) → just set targetAddr, done
+          update({ currentFunc: null, funcData: null, funcName: null, loading: false });
+          return;
         }
-        cache.set(cacheKey, data);
-        set((s) => ({
-          channels: {
-            ...s.channels,
-            [ch]: {
-              ...s.channels[ch],
+
+        // Check if we already have this function loaded
+        const current = get().channels[ch];
+        if (current?.funcData?.func?.addr === funcAddr) {
+          // Same function — just update highlight, skip func_view
+          update({
+            loading: false,
+            highlightDisasmAddrs: resolved.type !== "function" && resolved.addr ? [resolved.addr] : [],
+          });
+          return;
+        }
+
+        // Check cache
+        const cacheKey = `${projectId}:${funcAddr}`;
+        const cached = channel._cache.get(cacheKey);
+        if (cached) {
+          update({
+            currentFunc: funcAddr,
+            funcData: cached,
+            funcName: cached.func.name,
+            loading: false,
+            highlightDisasmAddrs: resolved.type !== "function" && resolved.addr ? [resolved.addr] : [],
+          });
+          return;
+        }
+
+        // Load func_view — if it fails, we still have targetAddr for IDA View
+        funcView(projectId, funcAddr)
+          .then((data) => {
+            const cache = get().channels[ch]?._cache || new Map();
+            if (cache.size > 30) {
+              const first = cache.keys().next().value;
+              if (first) cache.delete(first);
+            }
+            cache.set(cacheKey, data);
+            update({
+              currentFunc: funcAddr,
               funcData: data,
               funcName: data.func.name,
               loading: false,
               _cache: cache,
-            },
-          },
-        }));
+              highlightDisasmAddrs: resolved.type !== "function" && resolved.addr ? [resolved.addr] : [],
+            });
+          })
+          .catch((e: any) => {
+            // Decompile failed — not fatal, IDA View already jumped via targetAddr
+            update({
+              currentFunc: funcAddr,
+              funcData: null,
+              funcName: resolved.name || null,
+              loading: false,
+              error: e?.message || String(e),
+            });
+          });
       })
       .catch((e: any) => {
-        const msg = e?.message || String(e);
-        set((s) => ({
-          channels: {
-            ...s.channels,
-            [ch]: { ...s.channels[ch], funcData: null, loading: false, error: msg },
-          },
-        }));
+        update({
+          loading: false,
+          error: e?.message || String(e),
+        });
       });
   },
 
@@ -261,5 +322,47 @@ export const useViewStore = create<ViewStore>((set, get) => ({
 
   clearAll: () => {
     set({ channels: { A: emptyChannel() }, activeChannel: "A" });
+  },
+
+  saveSession: () => {
+    const state = get();
+    const session: Record<string, string | null> = {};
+    for (const [ch, channelState] of Object.entries(state.channels)) {
+      if (channelState.currentFunc) {
+        session[ch] = channelState.currentFunc;
+      }
+    }
+    try {
+      localStorage.setItem("ramune-web:session", JSON.stringify({
+        channels: session,
+        activeChannel: state.activeChannel,
+        tabChannels: state.tabChannels,
+      }));
+    } catch {}
+  },
+
+  restoreSession: (projectId: string) => {
+    try {
+      const raw = localStorage.getItem("ramune-web:session");
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+
+      // Restore tab channels
+      if (saved.tabChannels) {
+        set({ tabChannels: saved.tabChannels });
+      }
+      if (saved.activeChannel) {
+        set({ activeChannel: saved.activeChannel });
+      }
+
+      // Re-navigate each channel to its last function
+      if (saved.channels) {
+        for (const [ch, func] of Object.entries(saved.channels)) {
+          if (func && typeof func === "string") {
+            get().navigateTo(ch, projectId, func);
+          }
+        }
+      }
+    } catch {}
   },
 }));

@@ -52,10 +52,14 @@ export const survey = (pid: string) =>
 export const funcView = (pid: string, func: string) =>
   request<import("./types").FuncViewData>(`${BASE}/projects/${pid}/func_view`, { func });
 
-export const linearView = (pid: string, addr: string, count?: number) =>
+export const resolveTarget = (pid: string, target: string) =>
+  request<import("./types").ResolveResult>(`${BASE}/projects/${pid}/resolve`, { target });
+
+export const linearView = (pid: string, addr: string, count?: number, direction?: "forward" | "backward") =>
   request<import("./types").LinearViewData>(`${BASE}/projects/${pid}/linear_view`, {
     addr,
     ...(count ? { count: String(count) } : {}),
+    ...(direction ? { direction } : {}),
   });
 
 // Listings

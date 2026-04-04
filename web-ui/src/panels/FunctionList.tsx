@@ -20,20 +20,23 @@ export function FunctionList() {
   const [loading, setLoading] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!activeProjectId) {
-      setFunctions([]);
-      return;
-    }
-    setLoading(true);
+  // Stale-while-revalidate: don't clear existing data during refresh
+  const fetchFunctions = useCallback((initial = false) => {
+    if (!activeProjectId) return;
+    if (initial) setLoading(true);
     listFuncs(activeProjectId)
       .then((res) => {
         const funcs = ((res as Record<string, unknown>).items ?? (res as Record<string, unknown>).functions) as FuncEntry[] || [];
         setFunctions(funcs);
       })
-      .catch(() => setFunctions([]))
+      .catch(() => { if (initial) setFunctions([]); })
       .finally(() => setLoading(false));
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) { setFunctions([]); return; }
+    fetchFunctions(true);
+  }, [activeProjectId, fetchFunctions]);
 
   const filtered = useMemo(() => {
     if (!filter) return functions;
@@ -62,7 +65,7 @@ export function FunctionList() {
   );
 
   return (
-    <div className="panel func-panel">
+    <div className="panel func-panel" onFocus={() => fetchFunctions()} tabIndex={-1}>
       <div className="panel-header">
         <span>Functions ({filtered.length})</span>
       </div>

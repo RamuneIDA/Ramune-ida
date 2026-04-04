@@ -2,6 +2,7 @@ import { useCallback, useRef, useEffect } from "react";
 import { useViewStore } from "../stores/viewStore";
 import { useProjectStore } from "../stores/projectStore";
 import { highlightOps } from "../utils/highlightAsm";
+import { isNavigable } from "../utils/codeNav";
 import { ChannelBadge } from "../components/ChannelBadge";
 
 export function Disassembly({ tabId = "disassembly" }: { tabId?: string }) {
@@ -20,35 +21,36 @@ export function Disassembly({ tabId = "disassembly" }: { tabId?: string }) {
     if (highlightDisasmAddrs.length === 0 || !containerRef.current) return;
     const firstAddr = highlightDisasmAddrs[0];
     const el = containerRef.current.querySelector(`[data-addr="${firstAddr}"]`);
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cRect = containerRef.current.getBoundingClientRect();
+    if (rect.top < cRect.top || rect.bottom > cRect.bottom) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
   }, [highlightDisasmAddrs]);
 
   const handleClick = useCallback(
     (addr: string, e: React.MouseEvent) => {
       activate();
 
-      if (e.detail === 2 && activeProjectId) {
-        const insn = funcData?.disasm.find((d) => d.addr === addr);
-        if (insn) {
-          const match = insn.operands.match(
-            /\b(sub_[0-9A-Fa-f]+|loc_[0-9A-Fa-f]+|0x[0-9A-Fa-f]+|_[A-Za-z_]\w*)\b/,
-          );
-          if (match) {
-            store.navigateTo(ch, activeProjectId, match[1]);
-            return;
-          }
-        }
-      }
+      const tokenEl = e.target as HTMLElement;
+      const token = tokenEl.getAttribute?.("data-token");
 
-      const target = (e.target as HTMLElement).getAttribute?.("data-token");
-      if (target) {
-        store.setHighlightToken(ch, target === highlightToken ? null : target);
+      // Double-click: navigate
+      if (e.detail === 2 && token && activeProjectId && isNavigable(token)) {
+        store.navigateTo(ch, activeProjectId, token);
         return;
       }
 
+      // Single click on token: highlight all occurrences
+      if (token) {
+        store.setHighlightToken(ch, token === highlightToken ? null : token);
+      }
+
+      // Always sync with decompile
       store.highlightFromDisasm(ch, addr);
     },
-    [store, ch, funcData, activeProjectId, highlightToken, activate],
+    [store, ch, activeProjectId, highlightToken, activate],
   );
 
   return (

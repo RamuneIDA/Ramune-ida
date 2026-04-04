@@ -376,30 +376,87 @@ Web UI 和 API 同进程 serve，无跨域问题。开发模式下用 Vite proxy
 - HexView 面板（经典 hex dump + ASCII，地址输入跳转）
 - 选择高亮（`highlightSelectionMatches`，黄色底色 + 下划线）
 
-### 剩余工作
+### Phase 5：跳转系统 ✅（A/B 完成，C/D 待做）
 
-**功能：**
-- 搜索面板前端（后端已有 `/api/projects/{pid}/search`）
-- Xrefs 面板（后端已有 `/api/projects/{pid}/xrefs`）
-- 键盘快捷键（G = 跳转地址，Esc = 返回上一个视图）
-- 面板布局持久化（localStorage 保存各 SplitPane ratio）
+**A. resolve 接口 ✅**
+- `core/webview/` 独立包，所有 UI 内部工具（`mcp:false`）集中管理
+- `resolve` 工具：传入名称/地址，返回 `{type, addr, func_name?, func_addr?, size?}`
+- `func_view`、`linear_view` 从 `core/analysis/` 迁移至 `core/webview/`
 
-**构建与打包：**
-- pyproject.toml hatch build hook（`uv build` 时自动 `npm run build`）
+**B. 统一跳转逻辑 ✅**
+- `navigateTo` 先调 resolve → 根据 type 决定行为
+- `function` / `code` → func_view 加载 + IDA View 跳转
+- `data` / `string` / `unknown` → 只设 targetAddr，IDA View 跳转
+- 同函数内跳转跳过 func_view（性能优化）
+- tree-sitter C 解析器替代正则判断可导航性
+- LABEL 跳转：函数内 goto 标签前端本地跳转
+- 会话持久化：刷新后恢复上次查看的函数
+
+**IDA View 重构 ✅**
+- 后端：`linear_view` 支持 `direction=forward|backward`，`prev_head` 线性反向遍历
+- 前端：稀疏数据模型，jumpTo 清空重建，上下边界按需加载
+- 段间 gap 自动跳过，未知字节折叠（≥64 阈值，醒目 badge）
+- 可见则不滚动优化
+
+**C. Hex View 跟随**
+- 待做：纳入 channel 同步，地址变化时自动跟随
+
+**D. 导航历史 UI**
+- 待做：viewStore 已有 history，缺前端返回/前进按钮
+
+### Phase 6：信息面板
+
+独立于跳转系统，可并行开发，但点击跳转依赖 Phase 5B。
+
+**E. Xrefs 面板**
+- 后端已有 `/api/projects/{pid}/xrefs`
+- 纯前端实现：显示指定地址的所有引用
+- 每条 xref 可点击跳转（依赖 B）
+- 可作为独立面板或侧边面板
+
+**F. 搜索面板**
+- 后端已有 `/api/projects/{pid}/search`
+- 正则搜索 strings / names / disasm / bytes
+- 搜索结果列表，点击跳转（依赖 B）
+
+### Phase 7：交互细节
+
+**G. 右键上下文菜单**
+- 依赖 B + E
+- 代码视图右键：复制地址、复制文本、查看 Xrefs、跳转到定义
+- IDA View 右键：复制地址、跳转
+
+**H. 键盘快捷键**
+- 依赖 B + D + F
+- G = 跳转到地址（弹出输入框）
+- Esc = 返回上一个视图
+- / = 聚焦搜索
+- N = 重命名（未来写操作）
+
+### Phase 8：工程化
+
+**I. 构建与打包**
+- pyproject.toml hatch build hook
 - Dockerfile multi-stage 前端构建
 
-**认证：**
-- 全局认证层（计划中，不在 Web UI 模块内实现）
+**J. 独立测试**
+- `tests/web/` — Web API 端点、Activity 拦截、WebSocket 推送
 
-**测试：**
-- `tests/web/` 独立测试（Web API 端点、Activity 拦截、WebSocket 推送）
+**K. 认证**
+- 全局认证层（不在 Web UI 模块内实现）
 
----
+### 依赖关系
 
-## 远期
+```
+A (resolve) → B (统一跳转) → C (Hex跟随)
+                            → D (导航历史)
+                            → E (Xrefs) → G (右键菜单)
+                            → F (搜索)  → H (键盘快捷键)
+                                          
+I/J/K 独立，可随时做
+```
 
-- **反编译 ↔ 反汇编行级同步** — 点击反编译某行，反汇编自动定位到对应地址。需要 Worker 插件调用 `ida_hexrays` 的 `cfunc.eamap` 返回行到地址的精确映射
-- **Dock 面板布局** — 完全自由的可拖拽面板系统（类似 VS Code / IDA），面板可拖出、合并 tab、停靠任意位置。需要引入 `rc-dock` 或 `FlexLayout`，整体布局代码重构
+实施顺序：A → B → D → C → E → F → G → H → I/J
 
 ---
 

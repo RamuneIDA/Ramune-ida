@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import DockLayout from "rc-dock";
 import type { LayoutData, TabData, TabGroup } from "rc-dock";
 import "rc-dock/dist/rc-dock-dark.css";
@@ -97,24 +97,48 @@ const groups: Record<string, TabGroup> = {
 const LS_KEY = "ramune-web:dock-layout-v3";
 
 function createDefaultLayout(): LayoutData {
-  // Pre-assign channels: decompile + idaview linked (A), disassembly independent (B)
   const store = useViewStore.getState();
   store.setTabChannel("decompile", "A");
   store.setTabChannel("idaview", "A");
-  store.setTabChannel("disassembly", "B");
+  store.setTabChannel("disassembly", "A");
 
   return {
     dockbox: {
       mode: "horizontal",
       children: [
         {
+          // Left: Functions/Strings on top, Project on bottom
+          mode: "vertical",
           size: 250,
-          tabs: [makeTab("functions"), makeTab("strings"), makeTab("hex"), makeTab("project")],
-          activeId: "project",
+          children: [
+            {
+              size: 400,
+              tabs: [makeTab("functions"), makeTab("strings")],
+            },
+            {
+              size: 300,
+              tabs: [makeTab("project")],
+            },
+          ],
         },
-        { size: 500, tabs: [makeTab("decompile")] },
-        { size: 500, tabs: [makeTab("idaview"), makeTab("disassembly")] },
-        { size: 300, tabs: [makeTab("activity")] },
+        {
+          // Center: Decompile on top, Activity on bottom
+          mode: "vertical",
+          size: 500,
+          children: [
+            { size: 500, tabs: [makeTab("decompile")] },
+            { size: 200, tabs: [makeTab("activity")] },
+          ],
+        },
+        {
+          // Right: IDA View/Disassembly on top, Hex on bottom
+          mode: "vertical",
+          size: 500,
+          children: [
+            { size: 500, tabs: [makeTab("idaview"), makeTab("disassembly")] },
+            { size: 200, tabs: [makeTab("hex")] },
+          ],
+        },
       ],
     },
   };
@@ -138,6 +162,9 @@ function App() {
   const clearView = useViewStore((s) => s.clearAll);
   const dockRef = useRef<DockLayout>(null);
 
+  // Compute initial layout ONCE
+  const initialLayout = useMemo(() => loadSavedLayout() || createDefaultLayout(), []);
+
   // Apply saved theme on mount
   useEffect(() => {
     applyTheme(getStoredThemeId());
@@ -153,7 +180,14 @@ function App() {
 
   useEffect(() => {
     const saved = localStorage.getItem("ramune-web:active-project");
-    if (saved) useProjectStore.getState().setActiveProject(saved);
+    if (saved) {
+      useProjectStore.getState().setActiveProject(saved);
+      // Restore last viewed functions after a short delay (let projects load first)
+      setTimeout(() => {
+        const pid = useProjectStore.getState().activeProjectId;
+        if (pid) useViewStore.getState().restoreSession(pid);
+      }, 500);
+    }
 
     fetchProjects();
     fetchSystem();
@@ -218,7 +252,7 @@ function App() {
       <div className="app-main">
         <DockLayout
           ref={dockRef}
-          defaultLayout={loadSavedLayout() || createDefaultLayout()}
+          defaultLayout={initialLayout}
           loadTab={loadTab}
           groups={groups}
           onLayoutChange={onLayoutChange}

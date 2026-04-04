@@ -65,11 +65,16 @@ def create_combined_app(
         )
         index_path = os.path.join(frontend_dir, "index.html")
 
-        async def spa_fallback(request):
+        # Serve static files (WASM, etc.) before SPA fallback
+        async def static_file(request):
+            path = request.path_params.get("path", "")
+            full = os.path.join(frontend_dir, path)
+            if os.path.isfile(full) and not path.startswith("."):
+                return FileResponse(full)
             return FileResponse(index_path)
 
-        routes.append(Route("/{path:path}", spa_fallback))
-        routes.append(Route("/", spa_fallback))
+        routes.append(Route("/{path:path}", static_file))
+        routes.append(Route("/", lambda r: FileResponse(index_path)))
 
     web_app = Starlette(routes=routes)
 

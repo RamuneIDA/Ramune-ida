@@ -1,8 +1,8 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useRef, useEffect, useState } from "react";
 import { useViewStore } from "../stores/viewStore";
 import { useProjectStore } from "../stores/projectStore";
-import { findNavTarget } from "../utils/codeNav";
-import { highlightC } from "../utils/highlight";
+import { initParser, isParserReady, tokenizeLine } from "../utils/cParser";
+import { renderTokens, highlightCFallback } from "../utils/highlight";
 import { ChannelBadge } from "../components/ChannelBadge";
 
 export function Decompile({ tabId = "decompile" }: { tabId?: string }) {
@@ -11,56 +11,83 @@ export function Decompile({ tabId = "decompile" }: { tabId?: string }) {
   const channel = store.getChannel(ch);
   const { activeProjectId } = useProjectStore();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [parserReady, setParserReady] = useState(isParserReady());
 
   const { currentFunc, funcName, funcData, loading, error,
     highlightDecompileLines, highlightToken } = channel;
 
-  // Set this channel as active when interacted with
   const activate = useCallback(() => store.setActiveChannel(ch), [store, ch]);
+
+  // Initialize tree-sitter parser
+  useEffect(() => {
+    if (!parserReady) {
+      initParser().then(() => setParserReady(true)).catch((e) => console.warn("[tree-sitter] init failed:", e));
+    }
+  }, [parserReady]);
 
   useEffect(() => {
     if (highlightDecompileLines.length === 0 || !containerRef.current) return;
     const firstLine = highlightDecompileLines[0];
     const el = containerRef.current.querySelector(`[data-line="${firstLine}"]`);
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!el) return;
+    // Only scroll if not already visible
+    const rect = el.getBoundingClientRect();
+    const cRect = containerRef.current.getBoundingClientRect();
+    if (rect.top < cRect.top || rect.bottom > cRect.bottom) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
   }, [highlightDecompileLines]);
 
   const handleClick = useCallback(
     (lineIdx: number, e: React.MouseEvent) => {
       activate();
 
-      if (e.ctrlKey || e.metaKey) {
-        const line = funcData?.decompile[lineIdx];
-        if (line && activeProjectId) {
-          const target = findNavTarget(line.text, 0);
-          if (target) {
-            store.navigateTo(ch, activeProjectId, target);
-            return;
-          }
-        }
-      }
+      const targetEl = e.target as HTMLElement;
+      const token = targetEl.getAttribute?.("data-token");
 
-      if (e.detail === 2) {
-        // Double-click on token → navigate
-        const target = (e.target as HTMLElement).getAttribute?.("data-token");
-        if (target && activeProjectId) {
-          store.navigateTo(ch, activeProjectId, target);
+      if (e.detail === 2 && token && activeProjectId) {
+        const isNav = targetEl.getAttribute("data-navigable") === "1";
+        if (isNav) {
+          // LABEL_* → local jump within current decompile
+          if (/^LABEL_\d+$/.test(token) && funcData) {
+            const targetLine = funcData.decompile.findIndex(
+              (l) => l.text.trimStart().startsWith(token + ":"),
+            );
+            if (targetLine >= 0) {
+              store.highlightFromDecompile(ch, targetLine);
+              const el = containerRef.current?.querySelector(`[data-line="${targetLine}"]`);
+              el?.scrollIntoView({ block: "center", behavior: "smooth" });
+              return;
+            }
+          }
+          store.navigateTo(ch, activeProjectId, token);
           return;
         }
       }
 
-      const target = (e.target as HTMLElement).getAttribute?.("data-token");
-      if (target) {
-        store.setHighlightToken(ch, target === highlightToken ? null : target);
-        return;
+      if (token) {
+        store.setHighlightToken(ch, token === highlightToken ? null : token);
       }
 
+      // Always sync with disassembly
       store.highlightFromDecompile(ch, lineIdx);
     },
     [store, ch, funcData, activeProjectId, highlightToken, activate],
   );
 
   const title = funcName || currentFunc || "";
+
+  // Render a line using tree-sitter or fallback
+  const renderLine = useCallback(
+    (text: string) => {
+      if (parserReady) {
+        const tokens = tokenizeLine(text);
+        return renderTokens(tokens, highlightToken);
+      }
+      return highlightCFallback(text, highlightToken);
+    },
+    [parserReady, highlightToken],
+  );
 
   return (
     <div className="panel decompile-panel" onMouseDown={activate}>
@@ -90,7 +117,7 @@ export function Decompile({ tabId = "decompile" }: { tabId?: string }) {
                   onClick={(e) => handleClick(line.line, e)}
                 >
                   <span className="code-lineno">{line.line + 1}</span>
-                  <span className="code-text">{highlightC(line.text, highlightToken)}</span>
+                  <span className="code-text">{renderLine(line.text)}</span>
                 </div>
               );
             })}

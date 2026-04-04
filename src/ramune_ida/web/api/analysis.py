@@ -128,7 +128,17 @@ def create_routes(get_state: Callable[[], AppState]) -> list[Route]:
         count = request.query_params.get("count")
         if count:
             params["count"] = int(count)
+        direction = request.query_params.get("direction")
+        if direction:
+            params["direction"] = direction
         return await _execute_tool(get_state, pid, "linear_view", params)
+
+    async def resolve(request: Request) -> JSONResponse:
+        pid = request.path_params["pid"]
+        target = request.query_params.get("target")
+        if not target:
+            return JSONResponse({"error": "Missing 'target' param"}, status_code=400)
+        return await _execute_tool(get_state, pid, "resolve", {"target": target})
 
     return [
         Route("/projects/{pid}/decompile", decompile),
@@ -139,4 +149,5 @@ def create_routes(get_state: Callable[[], AppState]) -> list[Route]:
         Route("/projects/{pid}/survey", survey),
         Route("/projects/{pid}/func_view", func_view),
         Route("/projects/{pid}/linear_view", linear_view),
+        Route("/projects/{pid}/resolve", resolve),
     ]
