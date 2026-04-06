@@ -147,6 +147,7 @@ export function MenuBar({ onAddPanel, onResetLayout }: MenuBarProps) {
         { label: "Cross References", onClick: () => onAddPanel("xrefs") },
         { label: "Segments", onClick: () => onAddPanel("segments") },
         { label: "Local Types", onClick: () => onAddPanel("localtypes") },
+        { label: "Search", onClick: () => onAddPanel("search") },
       ],
     },
     {

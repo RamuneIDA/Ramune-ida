@@ -80,6 +80,26 @@ export const listNames = (pid: string, filter?: string) =>
     ...(filter ? { filter } : {}),
   });
 
+// Search
+export const searchText = (pid: string, pattern: string, type?: string, count?: number) =>
+  request<{ total: number; matches: { addr?: string; value: string; source: string }[] }>(
+    `${BASE}/projects/${pid}/search`,
+    {
+      pattern,
+      ...(type && type !== "all" ? { type } : {}),
+      ...(count ? { count: String(count) } : {}),
+    },
+  );
+
+export const searchBytes = (pid: string, pattern: string, count?: number) =>
+  request<{ total: number; matches: { addr: string }[] }>(
+    `${BASE}/projects/${pid}/search/bytes`,
+    {
+      pattern,
+      ...(count ? { count: String(count) } : {}),
+    },
+  );
+
 // Activity history
 export const getActivity = (limit?: number, projectId?: string) =>
   request<{ events: import("./types").ActivityEvent[] }>(`${BASE}/activity`, {

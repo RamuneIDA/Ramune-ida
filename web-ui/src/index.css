@@ -980,6 +980,73 @@ body {
   white-space: nowrap;
 }
 
+/* Search panel */
+.search-controls {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.search-mode-tabs {
+  display: flex;
+  gap: 2px;
+}
+.search-mode-btn {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-mode-btn.active {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.search-input-row {
+  display: flex;
+  gap: 4px;
+}
+.search-input {
+  flex: 1;
+  background: var(--bg-primary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.search-input:focus { outline: 1px solid var(--accent); }
+.search-scope-select {
+  background: var(--bg-primary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.search-go-btn {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-go-btn:hover { background: var(--bg-hover); }
+.search-go-btn:disabled { opacity: 0.5; cursor: default; }
+.search-source {
+  font-size: 10px;
+  min-width: 42px;
+  flex-shrink: 0;
+}
+.search-results { padding: 0 4px; }
+
 /* HexView */
 .hex-panel {
   font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;

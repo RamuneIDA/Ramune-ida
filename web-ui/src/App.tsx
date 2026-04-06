@@ -19,6 +19,7 @@ import { ExportsList } from "./panels/ExportsList";
 import { NamesList } from "./panels/NamesList";
 import { SegmentsList } from "./panels/SegmentsList";
 import { LocalTypes } from "./panels/LocalTypes";
+import { SearchPanel } from "./panels/SearchPanel";
 import { useProjectStore } from "./stores/projectStore";
 import { useViewStore } from "./stores/viewStore";
 import {
@@ -45,6 +46,7 @@ const PANEL_TYPES: Record<string, { title: string; render: (tabId: string) => Re
   names:       { title: "Names",        render: () => <NamesList /> },
   segments:    { title: "Segments",     render: () => <SegmentsList /> },
   localtypes:  { title: "Local Types",  render: () => <LocalTypes /> },
+  search:      { title: "Search",       render: () => <SearchPanel /> },
   activity:    { title: "Activity",     render: () => <ActivityStream /> },
 };
 
