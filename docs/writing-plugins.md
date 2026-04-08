@@ -133,6 +133,44 @@ Write tools get automatic undo support — if the AI makes a mistake, `undo` rev
 
 Custom tags (e.g. `"crypto"`, `"analysis"`) are passed through untouched and can be used for your own categorization.
 
+### Auto-injected Tags
+
+During plugin discovery, the framework automatically injects two tags into every tool:
+
+| Tag      | Format                       | Example                           |
+|----------|------------------------------|-----------------------------------|
+| Path tag | `{group}::{module}::{name}` | `core::execution::execute_python` |
+| Name tag | `name::{name}`               | `name::execute_python`            |
+
+For built-in tools, the group path mirrors the Python package structure (`core::analysis`, `core::types`, etc.). For external plugins, the group is prefixed with `ext::` (e.g. `ext::my_plugin::my_tool`).
+
+These tags enable the `--exclude-tags` CLI option to filter tools by path or name.
+
+### Tag Filtering
+
+Use `--exclude-tags` to hide tools from the MCP tool list. The filter matches against **all** tags on a tool (including auto-injected ones) using `fnmatch`-style globs:
+
+```bash
+# Exclude unsafe tools
+ramune-ida --exclude-tags "kind:unsafe"
+
+# Exclude an entire module
+ramune-ida --exclude-tags "core::execution::*"
+
+# Exclude all core tools
+ramune-ida --exclude-tags "core::*"
+
+# Exclude a single tool by name
+ramune-ida --exclude-tags "name::execute_python"
+
+# Combine multiple patterns
+ramune-ida --exclude-tags "kind:unsafe,core::undo::*"
+```
+
+Excluded tools are still registered in the worker dispatch table — they are only hidden from MCP clients. Web UI internal tools (`mcp:false`) are always hidden regardless of this setting.
+
+If you don't like a particular tool, exclude it by tag — or simply delete its plugin folder. If you don't like the built-in tools, `--exclude-tags "core::*"` disables them all. You can even delete everything under `core/` and the server will still run; only session management tools (which are not plugins) remain.
+
 ### Example
 
 ```python

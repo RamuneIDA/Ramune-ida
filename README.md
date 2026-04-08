@@ -61,6 +61,7 @@ Low-frequency or exploratory operations are covered by `execute_python`, which p
 
 - **Metadata-driven plugin system** — tools auto-discovered at startup, dynamic MCP registration, external plugin folder support
 - **Framework tags** — `kind:read` / `kind:write` / `kind:unsafe` — write tools auto-create undo points
+- **Tag filtering** — `--exclude-tags` to hide tools from MCP by tag, path glob, or name
 - **Graceful cancellation** — SIGUSR1 + `sys.setprofile` hook → 5s watchdog → SIGKILL fallback
 - **Crash recovery** — auto-recover from IDA component files, fallback to `.i64`, periodic `.i64` packing
 - **Output truncation** — oversized output truncated with HTTP download for full content
@@ -180,6 +181,7 @@ All data is stored under a single data directory (default `~/.ramune-ida`, confi
 | `--data-dir` | `~/.ramune-ida` | Data directory for projects and plugins (`RAMUNE_DATA_DIR`) |
 | `--auto-save-interval` | `300` | Seconds between auto-saves (0 = disabled) |
 | `--output-max-length` | `20000` | Truncate tool output beyond this many chars |
+| `--exclude-tags` | — | Comma-separated tags to exclude from MCP (supports `::*` globs) |
 | `--web` | off | Enable Web UI on the same port |
 
 ## Building

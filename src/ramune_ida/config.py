@@ -20,6 +20,7 @@ class ServerConfig(BaseModel):
     output_preview_length: int = 3_000
     output_max_per_project: int = 100
     plugins_enabled: bool = True
+    exclude_tags: tuple[str, ...] = ()
 
     @property
     def resolved_data_dir(self) -> str:

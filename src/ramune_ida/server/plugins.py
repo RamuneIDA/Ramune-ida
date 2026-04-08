@@ -22,6 +22,7 @@ future mcp release breaks registration, check these first:
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import inspect
 import json
 import logging
@@ -94,16 +95,37 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 
-def register_plugin_tools(tools_metadata: list[dict[str, Any]]) -> int:
+def _is_excluded(tags: list[str], patterns: list[str]) -> bool:
+    """Return *True* if any *tag* matches any exclude *pattern*.
+
+    Supports ``fnmatch``-style globs so ``core::*`` matches all tags
+    that start with ``core::``.
+    """
+    return any(
+        fnmatch.fnmatch(tag, pat)
+        for tag in tags
+        for pat in patterns
+    )
+
+
+def register_plugin_tools(
+    tools_metadata: list[dict[str, Any]],
+    exclude_tags: list[str] | None = None,
+) -> int:
     """Create and register an MCP tool for each metadata entry.
 
     Returns the number of tools successfully registered.
     """
     count = 0
+    _exclude = exclude_tags or []
     for meta in tools_metadata:
         tags = meta.get("tags", [])
+        name = meta.get("name", "?")
         if TAG_MCP_FALSE in tags:
-            log.info("Skipping MCP registration for %s (mcp:false)", meta.get("name", "?"))
+            log.info("Skipping MCP registration for %s (mcp:false)", name)
+            continue
+        if _exclude and _is_excluded(tags, _exclude):
+            log.info("Excluded by tag filter: %s", name)
             continue
         try:
             _register_one(meta)
@@ -111,7 +133,7 @@ def register_plugin_tools(tools_metadata: list[dict[str, Any]]) -> int:
         except Exception:
             log.warning(
                 "Failed to register plugin tool %r",
-                meta.get("name", "?"),
+                name,
                 exc_info=True,
             )
     return count

@@ -133,6 +133,44 @@ def identify_crypto(params):
 
 自定义标签（如 `"crypto"`、`"analysis"`）原样透传，可用于自己的分类体系。
 
+### 自动注入标签
+
+插件发现阶段，框架会为每个工具自动注入两个标签：
+
+| 标签     | 格式                         | 示例                              |
+|----------|------------------------------|-----------------------------------|
+| 路径标签 | `{group}::{module}::{name}`  | `core::execution::execute_python` |
+| 名称标签 | `name::{name}`               | `name::execute_python`            |
+
+内置工具的 group 路径对应 Python 包结构（`core::analysis`、`core::types` 等）。外部插件以 `ext::` 为前缀（如 `ext::my_plugin::my_tool`）。
+
+这些标签使 `--exclude-tags` CLI 选项能够按路径或名称过滤工具。
+
+### 标签过滤
+
+通过 `--exclude-tags` 从 MCP 工具列表中隐藏工具。过滤器对工具的**所有**标签（含自动注入的）进行 `fnmatch` 风格的 glob 匹配：
+
+```bash
+# 排除 unsafe 工具
+ramune-ida --exclude-tags "kind:unsafe"
+
+# 排除整个模块
+ramune-ida --exclude-tags "core::execution::*"
+
+# 排除所有 core 工具
+ramune-ida --exclude-tags "core::*"
+
+# 按名称排除单个工具
+ramune-ida --exclude-tags "name::execute_python"
+
+# 组合多个模式
+ramune-ida --exclude-tags "kind:unsafe,core::undo::*"
+```
+
+被排除的工具仍在 Worker dispatch 表中注册——它们仅对 MCP 客户端不可见。Web UI 内部工具（`mcp:false`）始终隐藏，不受此设置影响。
+
+如果你不喜欢某个工具，通过标签排除即可——或者直接删除对应的插件文件夹。如果你不喜欢所有工具的设计，`--exclude-tags "core::*"` 可以一次性禁用全部。甚至可以删掉整个 `core/` 目录，服务器照常运行——只剩会话管理工具（它们不是插件）。
+
 ### 示例
 
 ```python

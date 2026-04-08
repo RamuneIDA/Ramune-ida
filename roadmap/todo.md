@@ -9,15 +9,15 @@
 ## 基础设施
 
 - [ ] **tool call 批量化** — 支持单次请求中批量调用多个工具（如批量 rename、批量 set_type），减少 IPC 往返开销
-- [ ] **tag filter 系统** — 基于 tags 的工具可见性过滤，客户端可按 domain/kind 筛选工具列表（如只显示 `kind:read` 或隐藏 `kind:unsafe`）
+- [x] **tag filter 系统** — `--exclude-tags` 按标签/路径通配/名称隐藏 MCP 工具。自动注入路径标签（`core::execution::execute_python`）和名称标签（`name::execute_python`），支持 `fnmatch` glob
+- [x] [bench] **execute_python 硬超时去掉** — 统一走 MCP 层超时 + task_id 轮询/cancel
 - [ ] **大文件上传流式写入** — `files.py` upload 端点改为分块流式写入磁盘，避免大文件全量读入内存
-- [ ] [bench] **execute_python 硬超时去掉** — 统一走 MCP 层超时 + task_id 轮询/cancel。两层超时行为不可预测
 
 ---
 
 ## 新工具
 
-- [ ] resolve — VA ↔ 文件偏移 ↔ ASLR 运行时地址互转
+- [ ] addr_convert — VA ↔ 文件偏移 ↔ ASLR 运行时地址互转
 - [ ] stack_frame — 函数栈帧布局查看
 - [ ] [bench] call_graph — `call_graph(func, depth?, direction?)` 返回调用树 JSON。用 `idautils.CodeRefsFrom`/`CodeRefsTo` 递归构建
 
@@ -25,12 +25,12 @@
 
 ## listing 扩展
 
-> 当前：list_funcs, list_strings, list_imports, list_names（4 个）。
-> 过滤统一为 `filter`（substring 包含）+ `exclude`（substring 排除），各接受单个字符串。去掉 offset/count 分页。
+> 当前：list_funcs, list_strings, list_imports, list_names, list_types（5 个）。
+> 过滤统一为 `filter`（substring 包含）+ `exclude`（substring 排除），各接受单个字符串。
 
+- [x] list_types — 本地类型库（支持 kind 过滤：struct/enum/union/typedef）
 - [ ] list_exports — 导出函数
 - [ ] list_segments — 段信息
-- [ ] list_types — 本地类型库
 - [ ] list_structs — 结构体列表
 - [ ] list_enums — 枚举列表
 - [ ] list_entries — 入口点

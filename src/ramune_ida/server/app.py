@@ -67,7 +67,7 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[dict]:
             _config.worker_python,
             plugin_dir=_config.resolved_plugin_dir,
         )
-        register_plugin_tools(tools_meta)
+        register_plugin_tools(tools_meta, exclude_tags=list(_config.exclude_tags))
 
     state = AppState(_config)
     await state.start()
@@ -93,7 +93,7 @@ async def ensure_state() -> AppState:
             _config.worker_python,
             plugin_dir=_config.resolved_plugin_dir,
         )
-        register_plugin_tools(tools_meta)
+        register_plugin_tools(tools_meta, exclude_tags=list(_config.exclude_tags))
 
     state = AppState(_config)
     await state.start()

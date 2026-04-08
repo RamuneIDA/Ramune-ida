@@ -79,6 +79,13 @@ def main() -> None:
         help="Truncate tool output beyond this many chars (default: 20000)",
     )
     parser.add_argument(
+        "--exclude-tags", default="",
+        help=(
+            "Comma-separated tags to hide from MCP. "
+            "Supports glob: core::*, name::execute_python, kind:unsafe"
+        ),
+    )
+    parser.add_argument(
         "--web", action="store_true",
         help="Enable Web UI (served on the same port)",
     )
@@ -88,6 +95,10 @@ def main() -> None:
     from ramune_ida.config import ServerConfig
     from ramune_ida.server.app import configure, get_state, mcp
 
+    exclude_tags = tuple(
+        t.strip() for t in args.exclude_tags.split(",") if t.strip()
+    )
+
     config = ServerConfig(
         worker_python=args.worker_python,
         soft_limit=args.soft_limit,
@@ -95,6 +106,7 @@ def main() -> None:
         auto_save_interval=args.auto_save_interval,
         data_dir=args.data_dir,
         output_max_length=args.output_max_length,
+        exclude_tags=exclude_tags,
     )
     configure(config)
 

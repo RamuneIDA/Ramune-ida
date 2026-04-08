@@ -121,6 +121,17 @@ def _scan_folder(folder: str) -> tuple[list[dict[str, Any]], dict[str, Callable]
     return tools, handlers
 
 
+def _module_to_group(module_path: str) -> str:
+    """Convert a Python module path to a plugin group prefix.
+
+    Built-in:  ``ramune_ida.core.execution`` → ``core::execution``
+    External:  ``my_plugin``                 → ``ext::my_plugin``
+    """
+    if module_path.startswith("ramune_ida."):
+        return module_path[len("ramune_ida."):].replace(".", "::")
+    return f"ext::{module_path.replace('.', '::')}"
+
+
 def _scan_submodule(
     module_path: str,
     *,
@@ -147,6 +158,8 @@ def _scan_submodule(
         log.warning("Cannot import package %s", module_path)
         return tools, handlers
 
+    group = _module_to_group(module_path)
+
     seen: set[str] = set()
     for tool in tools_list:
         name = tool["name"]
@@ -158,6 +171,9 @@ def _scan_submodule(
             log.warning("Handler %r not exported by %s", fn_name, module_path)
             continue
         tool.setdefault("_source", source)
+        tags = tool.setdefault("tags", [])
+        tags.append(f"{group}::{name}")
+        tags.append(f"name::{name}")
         tools.append(tool)
         handlers[name] = fn
         seen.add(name)
