@@ -202,7 +202,12 @@ class Project:
             self.exe_path = None
         else:
             self.exe_path = path
-            self.idb_path = os.path.splitext(path)[0] + ".i64"
+            # Prefer existing IDB; actual path is updated after worker opens it.
+            stem = os.path.splitext(path)[0]
+            if os.path.isfile(stem + ".idb"):
+                self.idb_path = stem + ".idb"
+            else:
+                self.idb_path = stem + ".i64"
 
     @property
     def has_database(self) -> bool:
@@ -373,6 +378,8 @@ class Project:
                 raise RuntimeError(
                     f"open_database failed: {resp.error.message}"
                 )
+            if isinstance(resp.result, dict) and resp.result.get("idb_path"):
+                self.idb_path = resp.result["idb_path"]
             save_req = SaveDatabase(idb_path=self.idb_path).to_request("__save_init__")
             await handle.execute(save_req)
         except Exception:

@@ -54,11 +54,13 @@ def handle_open_database(cmd: OpenDatabase) -> dict:
         _remove_residual_files(cmd.path)
         rc = idapro.open_database(cmd.path, cmd.auto_analysis)
         if rc == 0:
+            import idc
             return {
                 "path": cmd.path,
+                "idb_path": idc.get_idb_path(),
                 "recovered": True,
                 "warning": "Recovery from component files failed. "
-                           "Opened from last saved .i64 — recent changes may be lost.",
+                           "Opened from last saved IDB — recent changes may be lost.",
             }
 
     if rc != 0:
@@ -67,7 +69,10 @@ def handle_open_database(cmd: OpenDatabase) -> dict:
             f"open_database returned error code {rc} for {cmd.path}",
         )
 
-    result: dict = {"path": cmd.path}
+    import idc
+    idb_path = idc.get_idb_path()
+
+    result: dict = {"path": cmd.path, "idb_path": idb_path}
     if recovered:
         result["recovered"] = True
     return result
