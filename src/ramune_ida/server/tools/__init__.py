@@ -17,7 +17,7 @@ register_tool(
 )(session.open_project)
 
 register_tool(
-    description="Destroy a project and clean up its work directory.",
+    description="Release a project and clean up its resources.",
 )(session.close_project)
 
 register_tool(

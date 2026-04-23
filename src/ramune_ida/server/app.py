@@ -28,6 +28,7 @@ from ramune_ida.server.state import AppState
 
 _config: ServerConfig | None = None
 _state: AppState | None = None
+_submodules_imported = False
 
 request_base_url: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_base_url", default=""
@@ -35,9 +36,20 @@ request_base_url: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 
 def configure(config: ServerConfig) -> None:
-    """Set the configuration before ``mcp.run()``."""
-    global _config
+    """Set the configuration before ``mcp.run()``.
+
+    Also triggers (once) the import of tool / resource / custom-route
+    submodules so they can see the resolved config and register
+    description text accordingly.
+    """
+    global _config, _submodules_imported
     _config = config
+    mcp._mcp_server.instructions = build_instructions(config)
+    if not _submodules_imported:
+        _submodules_imported = True
+        import ramune_ida.server.tools  # noqa: F401
+        import ramune_ida.server.files  # noqa: F401
+        import ramune_ida.server.resources  # noqa: F401
 
 
 def get_state() -> AppState:
@@ -45,6 +57,13 @@ def get_state() -> AppState:
     if _state is None:
         raise RuntimeError("Server not initialised — AppState is None")
     return _state
+
+
+def get_config() -> ServerConfig:
+    """Return the active ServerConfig.  Raises if ``configure()`` was not called."""
+    if _config is None:
+        raise RuntimeError("Server not configured — call configure() first")
+    return _config
 
 
 # Lifespan -------------------------------------------------------------------
@@ -103,7 +122,7 @@ async def ensure_state() -> AppState:
 
 # FastMCP instance -----------------------------------------------------------
 
-INSTRUCTIONS = """\
+_INSTRUCTIONS_HTTP = """\
 Ramune-ida — headless IDA Pro for AI reverse engineering.
 
 Concepts:
@@ -131,7 +150,39 @@ Poll with get_task_result.
 If a tool cannot handle your request, use execute_python to run arbitrary IDAPython.
 """
 
-mcp = FastMCP("ramune-ida", instructions=INSTRUCTIONS, lifespan=_lifespan)
+
+_INSTRUCTIONS_LOCAL = """\
+Ramune-ida — headless IDA Pro for AI reverse engineering.
+
+Concepts:
+- project: a workspace. Created by open_project().
+- database: an IDA database opened inside a project via open_database().
+- project_id: returned by open_project(), required by all other tools.
+
+Workflow: open_project → open_database(path) → analyze → close_project.
+Pass an absolute path (or a path relative to your own working directory) to
+open_database. The IDA worker is started lazily: if it has exited or crashed,
+the next tool call automatically restarts it and reopens the database. You do
+NOT need to call open_database again after a restart or between analysis
+commands.
+
+Concurrency: you can call multiple tools concurrently. Each project executes
+requests sequentially through a queue — concurrent calls are queued automatically,
+so you do not need to wait for one to finish before sending the next.
+Multiple projects run isolated IDA processes and never interfere with each other.
+
+If a request takes too long, it continues in the background and returns a task_id.
+Poll with get_task_result.
+If a tool cannot handle your request, use execute_python to run arbitrary IDAPython.
+"""
+
+
+def build_instructions(config: ServerConfig) -> str:
+    """Return the MCP server instructions appropriate for *config*."""
+    return _INSTRUCTIONS_LOCAL if config.local_mode else _INSTRUCTIONS_HTTP
+
+
+mcp = FastMCP("ramune-ida", instructions=_INSTRUCTIONS_HTTP, lifespan=_lifespan)
 
 
 # Auto-truncating tool decorator --------------------------------------------
@@ -151,7 +202,7 @@ def _resolve_project_context(
     project = state.projects.get(pid)
     if project is None:
         return None, None
-    return pid, os.path.join(project.work_dir, "outputs")
+    return pid, project.outputs_dir
 
 
 def register_tool(*deco_args: Any, **deco_kwargs: Any) -> Any:
@@ -185,8 +236,7 @@ def register_tool(*deco_args: Any, **deco_kwargs: Any) -> Any:
     return decorator
 
 
-# Trigger tool / resource / route registration by importing submodules.
-# These imports MUST stay after ``mcp`` and ``register_tool`` are defined.
-import ramune_ida.server.tools  # noqa: F401, E402
-import ramune_ida.server.files  # noqa: F401, E402
-import ramune_ida.server.resources  # noqa: F401, E402
+# NOTE: tool / resource / custom-route submodule imports are deferred to
+# ``configure()`` so they can inspect the resolved ServerConfig (e.g. to pick
+# local-mode descriptions).  Callers MUST invoke ``configure()`` before the
+# server starts handling requests — both CLI and tests do this.

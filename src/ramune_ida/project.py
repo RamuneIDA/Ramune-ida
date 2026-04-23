@@ -176,12 +176,14 @@ class Project:
         limiter: Limiter,
         worker_python: str = "python",
         plugin_dir: str | None = None,
+        outputs_dir: str | None = None,
     ) -> None:
         self.project_id = project_id
         self.work_dir = work_dir
         self._limiter = limiter
         self._worker_python = worker_python
         self._plugin_dir = plugin_dir
+        self._outputs_dir_override = outputs_dir
 
         self.exe_path: str | None = None
         self.idb_path: str | None = None
@@ -190,6 +192,18 @@ class Project:
         self._handle: WorkerHandle | None = None
         self._exec_lock = asyncio.Lock()
         self._tasks: dict[str, Task] = {}
+
+    @property
+    def outputs_dir(self) -> str:
+        """Directory for truncated tool outputs.
+
+        Defaults to ``<work_dir>/outputs`` but can be overridden at
+        construction time (used by local mode to isolate outputs under
+        ``<cwd>/.ramune-outputs/<pid>/``).
+        """
+        if self._outputs_dir_override is not None:
+            return self._outputs_dir_override
+        return os.path.join(self.work_dir, "outputs")
 
     def set_database(self, path: str) -> None:
         """Bind a binary or IDB to this project.

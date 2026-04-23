@@ -5,6 +5,8 @@ Usage::
     ramune-ida                          # default http://127.0.0.1:8000
     ramune-ida http://0.0.0.0:8000     # Streamable HTTP
     ramune-ida sse://127.0.0.1:9000    # SSE (legacy)
+    ramune-ida stdio://                 # stdio transport (MCP over stdin/stdout)
+    ramune-ida --local stdio://         # local mode over stdio
 """
 
 from __future__ import annotations
@@ -19,10 +21,15 @@ from urllib.parse import urlparse
 def parse_transport_url(url: str) -> tuple[str, str, int]:
     """Parse a transport URL into *(transport, host, port)*.
 
-    Supported schemes: ``http`` (→ streamable-http) and ``sse``.
+    Supported schemes: ``http`` / ``https`` (→ streamable-http),
+    ``sse``, and ``stdio`` (host/port irrelevant).
     """
     parsed = urlparse(url)
     scheme = parsed.scheme or "http"
+
+    if scheme == "stdio":
+        return "stdio", "", 0
+
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 8000
 
@@ -49,7 +56,7 @@ def main() -> None:
         "url",
         nargs="?",
         default="http://127.0.0.1:8000",
-        help="Transport URL: http://host:port, sse://host:port",
+        help="Transport URL: http://host:port, sse://host:port, stdio://",
     )
     parser.add_argument(
         "--soft-limit", type=int, default=4,
@@ -89,8 +96,31 @@ def main() -> None:
         "--web", action="store_true",
         help="Enable Web UI (served on the same port)",
     )
+    parser.add_argument(
+        "--local", action="store_true",
+        help=(
+            "Local mode: projects share the server cwd; file upload/download "
+            "HTTP endpoints are disabled; large outputs are written to "
+            "<cwd>/.ramune-outputs/<project_id>/ and referenced by absolute "
+            "path. close_project does NOT delete the cwd."
+        ),
+    )
 
     args = parser.parse_args()
+
+    import logging
+    log = logging.getLogger("ramune-ida.cli")
+
+    transport, host, port = parse_transport_url(args.url)
+
+    if args.web and (args.local or transport == "stdio"):
+        reason = "local mode" if args.local else "stdio transport"
+        log.warning(
+            "--web is disabled under %s (Web UI requires an HTTP server "
+            "and, for local mode, would expose the cwd).",
+            reason,
+        )
+        args.web = False
 
     from ramune_ida.config import ServerConfig
     from ramune_ida.server.app import configure, get_state, mcp
@@ -107,12 +137,16 @@ def main() -> None:
         data_dir=args.data_dir,
         output_max_length=args.output_max_length,
         exclude_tags=exclude_tags,
+        local_mode=args.local,
     )
     configure(config)
 
+    if transport == "stdio":
+        asyncio.run(_serve_stdio(mcp))
+        return
+
     from mcp.server.transport_security import TransportSecuritySettings
 
-    transport, host, port = parse_transport_url(args.url)
     mcp.settings.host = host
     mcp.settings.port = port
 
@@ -164,6 +198,42 @@ def main() -> None:
     asyncio.run(_serve(
         _HostCapture(asgi_app), host, port, mcp.settings.log_level.lower(),
     ))
+
+
+async def _serve_stdio(mcp: object) -> None:
+    """Run the FastMCP server over stdio with graceful shutdown."""
+    # Install graceful shutdown for SIGINT/SIGTERM. FastMCP.run_stdio_async
+    # will also catch KeyboardInterrupt, but we want AppState cleanup too.
+    shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, shutdown_event.set)
+        except NotImplementedError:
+            # Windows: fall back to default handlers.
+            pass
+
+    serve_task = asyncio.create_task(mcp.run_stdio_async())  # type: ignore[attr-defined]
+    shutdown_task = asyncio.create_task(shutdown_event.wait())
+
+    try:
+        await asyncio.wait(
+            [serve_task, shutdown_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        from ramune_ida.server import app as _app
+
+        if _app._state is not None:
+            await _app._state.shutdown()
+            _app._state = None
+
+        if not serve_task.done():
+            serve_task.cancel()
+            try:
+                await serve_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 async def _serve(app: object, host: str, port: int, log_level: str) -> None:

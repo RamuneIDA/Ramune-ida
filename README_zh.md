@@ -103,6 +103,44 @@ uv run ramune-ida --worker-python /opt/ida/python3
 
 # SSE 模式（兼容旧版 MCP 客户端）
 uv run ramune-ida sse://127.0.0.1:9000
+
+# stdio 模式（MCP over stdin/stdout，不监听任何端口）
+uv run ramune-ida stdio://
+
+# 本地模式（见下方 "本地模式" 章节）
+uv run ramune-ida --local stdio://
+```
+
+## 本地模式
+
+默认情况下 Ramune-ida 把每个 project 放在 `<data-dir>/projects/<project_id>/`
+下，并通过 HTTP 端点让客户端上传二进制 / 下载截断输出。这种设计适合容器化
+部署，但在本地直接使用时比较繁琐。
+
+加上 `--local` 后切换到更简单的磁盘布局：
+
+- 所有 project 共用 **服务器 cwd** 作为 `work_dir`，不再创建隐藏的
+  per-project 目录。
+- `open_database` 接受绝对路径或相对 cwd 的路径，不需要先上传。
+- `POST /files/...` 与 `GET /files/...` HTTP 端点 **全部禁用**（返回 404）。
+- 截断后的工具输出落盘到 `<cwd>/.ramune-outputs/<project_id>/`，并以
+  **磁盘绝对路径** 暴露给客户端，无需 HTTP 下载。
+- `close_project` **绝不会** 删除 cwd，仅清理该 project 的
+  `.ramune-outputs/<project_id>/` 子目录。
+- 此模式下 `--web` 被强制关闭（Web UI 会枚举整个 cwd，不合适）。
+
+典型的 stdio MCP 客户端配置（Claude Desktop / Cursor / Codex CLI）：
+
+```json
+{
+  "mcpServers": {
+    "ramune-ida": {
+      "command": "uv",
+      "args": ["run", "ramune-ida", "--local", "stdio://"],
+      "cwd": "/path/to/your/reversing/workspace"
+    }
+  }
+}
 ```
 
 ### MCP 客户端配置
@@ -183,7 +221,8 @@ uv run ramune-ida --web
 | `--auto-save-interval` | `300` | 自动保存间隔秒数（0 = 禁用） |
 | `--output-max-length` | `20000` | 工具输出截断字符数 |
 | `--exclude-tags` | — | 逗号分隔的排除标签（支持 `::*` 通配） |
-| `--web` | 关闭 | 启用 Web UI（同端口） |
+| `--web` | 关闭 | 启用 Web UI（同端口；`--local` 或 `stdio://` 下强制关闭） |
+| `--local` | 关闭 | 本地模式：project 使用 cwd；禁用 `/files` 端点与 Web UI；输出以绝对路径暴露 |
 
 ## 构建
 

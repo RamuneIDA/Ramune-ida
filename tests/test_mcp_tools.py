@@ -570,7 +570,9 @@ async def test_disasm_plugin_tool_registered(mcp_app):
     assert r["status"] == "completed"
     assert r["echo"] == "plugin:disasm"
     assert r["params"]["addr"] == "0x401000"
-    assert r["params"]["count"] == 20
+    # When ``count`` is omitted, disasm analyses the whole function; the
+    # parameter is forwarded to the worker as None (no default in metadata).
+    assert r["params"].get("count") is None
 
 
 @pytest.mark.asyncio

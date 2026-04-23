@@ -853,9 +853,11 @@ def my_tool(params: dict[str, Any]) -> dict[str, Any]:
 |-----------|------|------|
 | **Streamable HTTP** | 是（默认） | 本地 / 远程 / 容器化 / 多客户端 |
 | **SSE** | 是（兼容） | 旧版 MCP 客户端 |
-| stdio | 不支持 | 文件上传/下载依赖 HTTP 端点，stdio 无法提供 |
+| **stdio** | 是（`stdio://`） | Server 与 Client 同机，多用于 `--local` 搭配 stdio MCP 客户端 |
 
-Server 和 Client 不共享文件系统。二进制文件和 IDB 通过 HTTP 端点 `/files/{project_id}/` 上传/下载，这要求 HTTP transport。
+默认（容器化）部署下 Server 与 Client 不共享文件系统，二进制文件和 IDB 通过 HTTP 端点 `/files/{project_id}/` 上传/下载，这要求 HTTP/SSE transport。
+
+**本地模式（`--local`）** 假设 Server 与 Client 同机（常与 `stdio://` 搭配）：所有 project 以 Server cwd 作为 `work_dir`；`/files/...` 端点被禁用；客户端直接用绝对路径调用 `open_database`；大输出截断后以磁盘绝对路径暴露给客户端。
 
 ---
 

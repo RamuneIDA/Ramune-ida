@@ -17,6 +17,13 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from ramune_ida.server.app import mcp, get_state
 
 
+def _local_disabled_response() -> Response:
+    return JSONResponse(
+        {"error": "File endpoints are disabled in local mode"},
+        status_code=404,
+    )
+
+
 def _file_response(path: str) -> Response:
     return FileResponse(
         path,
@@ -32,6 +39,8 @@ def _file_response(path: str) -> Response:
 async def upload_to_project(request: Request) -> Response:
     """Upload a file into a project's work directory."""
     state = get_state()
+    if state.config.local_mode:
+        return _local_disabled_response()
     project_id = request.path_params["project_id"]
     project = state.projects.get(project_id)
     if project is None:
@@ -68,6 +77,8 @@ async def upload_to_project(request: Request) -> Response:
 async def download_from_project(request: Request) -> Response:
     """Download any file from a project's work directory."""
     state = get_state()
+    if state.config.local_mode:
+        return _local_disabled_response()
     project_id = request.path_params["project_id"]
     rel_path = request.path_params["path"]
 

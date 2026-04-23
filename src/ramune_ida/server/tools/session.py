@@ -41,11 +41,12 @@ async def open_project(
             f"Project '{pid}' already exists (reusing). "
             f"Use a different ID to create a new project."
         )
-    base = request_base_url.get("")
-    if base:
-        result["upload"] = f"{base}/files/{pid}"
-        result["download"] = f"{base}/files/{pid}/{{filename}}"
-        result["curl_upload"] = f"curl -F file=@./FILENAME {base}/files/{pid}"
+    if not state.config.local_mode:
+        base = request_base_url.get("")
+        if base:
+            result["upload"] = f"{base}/files/{pid}"
+            result["download"] = f"{base}/files/{pid}/{{filename}}"
+            result["curl_upload"] = f"curl -F file=@./FILENAME {base}/files/{pid}"
     return result
 
 
@@ -81,7 +82,7 @@ async def projects() -> dict:
 
 async def open_database(
     project_id: str,
-    path: Annotated[str, Field(description="Binary or IDB path, relative to work_dir")],
+    path: Annotated[str, Field(description="Path to the binary or IDB file.")],
     survey: Annotated[bool, Field(description="Run survey after opening (default: true)")] = True,
 ) -> dict:
     state = get_state()

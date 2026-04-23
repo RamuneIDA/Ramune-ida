@@ -89,6 +89,12 @@ async def call(mcp, name: str, args: dict | None = None) -> dict:
 # ── Helpers ───────────────────────────────────────────────────────
 
 
+def _get_work_dir(project_id: str) -> str:
+    """Read a project's work_dir from internal state (test-only)."""
+    state = app_module.get_state()
+    return state.projects[project_id].work_dir
+
+
 def _copy_binary(name: str, work_dir: str) -> str:
     """Copy a test binary to the project work_dir."""
     src = os.path.join(BINARY_DIR, name)
@@ -110,7 +116,7 @@ async def test_open_close_real_binary(mcp_ida):
 
     r = await call(mcp, "open_project", {"project_id": "ida-test"})
     pid = r["project_id"]
-    binary = _copy_binary("ch01", r["work_dir"])
+    binary = _copy_binary("ch01", _get_work_dir(pid))
 
     r = await call(mcp, "open_database", {"project_id": pid, "path": binary})
     assert r["status"] == "completed"
@@ -135,7 +141,7 @@ async def test_reopen_idb(mcp_ida):
 
     r = await call(mcp, "open_project", {"project_id": "reopen"})
     pid = r["project_id"]
-    work_dir = r["work_dir"]
+    work_dir = _get_work_dir(pid)
     binary = _copy_binary("ch01", work_dir)
 
     r = await call(mcp, "open_database", {"project_id": pid, "path": binary})
@@ -158,11 +164,11 @@ async def test_multiple_projects_real(mcp_ida):
     """Open two different binaries in separate projects."""
     mcp = mcp_ida
 
-    r1 = await call(mcp, "open_project", {"project_id": "multi-a"})
-    r2 = await call(mcp, "open_project", {"project_id": "multi-b"})
+    await call(mcp, "open_project", {"project_id": "multi-a"})
+    await call(mcp, "open_project", {"project_id": "multi-b"})
 
-    bin_a = _copy_binary("ch01", r1["work_dir"])
-    bin_b = _copy_binary("ch02", r2["work_dir"])
+    bin_a = _copy_binary("ch01", _get_work_dir("multi-a"))
+    bin_b = _copy_binary("ch02", _get_work_dir("multi-b"))
 
     ra = await call(mcp, "open_database", {"project_id": "multi-a", "path": bin_a})
     rb = await call(mcp, "open_database", {"project_id": "multi-b", "path": bin_b})
@@ -184,8 +190,8 @@ async def test_decompile_via_mcp(mcp_ida):
     """Full MCP chain: open_project -> open_database -> decompile -> close."""
     mcp = mcp_ida
 
-    r = await call(mcp, "open_project", {"project_id": "dec-real"})
-    binary = _copy_binary("ch01", r["work_dir"])
+    await call(mcp, "open_project", {"project_id": "dec-real"})
+    binary = _copy_binary("ch01", _get_work_dir("dec-real"))
 
     await call(mcp, "open_database", {"project_id": "dec-real", "path": binary})
 
@@ -197,3 +203,130 @@ async def test_decompile_via_mcp(mcp_ida):
 
     await call(mcp, "close_database", {"project_id": "dec-real"})
     await call(mcp, "close_project", {"project_id": "dec-real"})
+
+
+# ── Local mode (real IDA) ─────────────────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def mcp_ida_local(tmp_path, monkeypatch):
+    """Start MCP in local mode with real IDA worker, chdir'd into a tmp dir."""
+    global _plugins_registered
+
+    monkeypatch.chdir(tmp_path)
+
+    config = ServerConfig(
+        worker_python=WORKER_PYTHON,
+        soft_limit=0,
+        hard_limit=2,
+        auto_save_interval=0,
+        data_dir=str(tmp_path / "_data"),
+        local_mode=True,
+    )
+
+    os.environ["IDADIR"] = IDA_DIR
+    os.environ["PYTHONPATH"] = IDA_PYTHON_PATH + os.pathsep + os.environ.get("PYTHONPATH", "")
+
+    app_module.configure(config)
+
+    if not _plugins_registered:
+        from ramune_ida.server.plugins import discover_tools, register_plugin_tools
+        tools_meta = await discover_tools(WORKER_PYTHON)
+        register_plugin_tools(tools_meta)
+        _plugins_registered = True
+
+    from ramune_ida.server.state import AppState
+    state = AppState(config)
+    await state.start()
+    app_module._state = state
+
+    yield app_module.mcp
+
+    await state.shutdown()
+    app_module._state = None
+
+
+@pytest.mark.asyncio
+async def test_local_decompile_via_absolute_path(mcp_ida_local, tmp_path):
+    """Local mode: open a binary by absolute path, decompile main,
+    verify cwd is untouched and outputs live under .ramune-outputs/."""
+    mcp = mcp_ida_local
+
+    # AI-side view: only project_id comes back — no upload/download/work_dir.
+    r = await call(mcp, "open_project", {"project_id": "loc"})
+    assert r["project_id"] == "loc"
+    for forbidden in ("upload", "download", "curl_upload", "work_dir", "mode"):
+        assert forbidden not in r
+
+    # Pre-seed a sentinel file in cwd; close_project must not delete it.
+    sentinel = tmp_path / "user_notes.txt"
+    sentinel.write_text("important reversing notes")
+
+    # Drop the binary somewhere OUTSIDE cwd to prove absolute paths work.
+    import shutil
+    src = os.path.join(BINARY_DIR, "ch01")
+    if not os.path.isfile(src):
+        pytest.skip(f"Test binary not found: {src}")
+    external = tmp_path.parent / "external_bins"
+    external.mkdir(exist_ok=True)
+    abs_binary = str(external / "ch01")
+    shutil.copy2(src, abs_binary)
+
+    r = await call(mcp, "open_database", {"project_id": "loc", "path": abs_binary})
+    assert r["status"] == "completed"
+    assert r.get("idb_path") is not None
+
+    r = await call(mcp, "decompile", {"project_id": "loc", "func": "main"})
+    assert r["status"] == "completed"
+    assert "code" in r and len(r["code"]) > 0
+
+    await call(mcp, "close_database", {"project_id": "loc"})
+
+    # outputs_dir must be under cwd/.ramune-outputs/<pid>/
+    outputs_dir = _get_work_dir("loc")  # == cwd
+    assert outputs_dir == str(tmp_path)
+    expected_outputs = tmp_path / ".ramune-outputs" / "loc"
+    # May or may not exist depending on truncation — either is fine.
+
+    await call(mcp, "close_project", {"project_id": "loc"})
+
+    # cwd and sentinel must survive close_project.
+    assert tmp_path.is_dir()
+    assert sentinel.exists()
+    assert sentinel.read_text() == "important reversing notes"
+    # Per-project outputs dir is gone.
+    assert not expected_outputs.exists()
+
+
+@pytest.mark.asyncio
+async def test_local_multi_projects_share_cwd(mcp_ida_local, tmp_path):
+    """Two projects in local mode share cwd but isolate outputs."""
+    mcp = mcp_ida_local
+
+    import shutil
+    src = os.path.join(BINARY_DIR, "ch01")
+    if not os.path.isfile(src):
+        pytest.skip(f"Test binary not found: {src}")
+    # Binary lives in cwd — relative path must work too.
+    rel_binary = "ch01"
+    shutil.copy2(src, tmp_path / rel_binary)
+
+    await call(mcp, "open_project", {"project_id": "a"})
+    await call(mcp, "open_project", {"project_id": "b"})
+    assert _get_work_dir("a") == str(tmp_path)
+    assert _get_work_dir("b") == str(tmp_path)
+
+    # Both should accept the same cwd-relative path.
+    ra = await call(mcp, "open_database", {"project_id": "a", "path": rel_binary})
+    rb = await call(mcp, "open_database", {"project_id": "b", "path": rel_binary})
+    assert ra["status"] == "completed"
+    assert rb["status"] == "completed"
+
+    await call(mcp, "close_database", {"project_id": "a"})
+    await call(mcp, "close_database", {"project_id": "b"})
+    await call(mcp, "close_project", {"project_id": "a"})
+    await call(mcp, "close_project", {"project_id": "b"})
+
+    # cwd intact.
+    assert tmp_path.is_dir()
+    assert (tmp_path / rel_binary).exists()

@@ -25,8 +25,33 @@ _LIST_CAP = 30
 _LIST_MIN = 5
 
 
-def _make_url(project_id: str, output_id: str, ext: str) -> str:
-    """Build a download URL, absolute if request_base_url is available."""
+def _is_local_mode() -> bool:
+    """Cheap guard — safe to call before configure()."""
+    try:
+        from ramune_ida.server.app import get_config
+
+        return get_config().local_mode
+    except Exception:
+        return False
+
+
+def _make_url(
+    project_id: str,
+    output_id: str,
+    ext: str,
+    *,
+    abs_path: str | None = None,
+) -> str:
+    """Build a download URL for a truncated output.
+
+    In local mode (caller passes ``abs_path``), returns the on-disk
+    absolute path so clients can read it directly without HTTP.
+    Otherwise returns the ``/files/...`` HTTP URL, prefixed with the
+    request's base URL when available.
+    """
+    if abs_path is not None:
+        return abs_path
+
     from ramune_ida.server.app import request_base_url
 
     base = request_base_url.get("")
@@ -99,7 +124,10 @@ class OutputStore:
         bucket[output_id] = path
         self._evict(bucket)
 
-        url = _make_url(project_id, output_id, ".txt")
+        url = _make_url(
+            project_id, output_id, ".txt",
+            abs_path=path if _is_local_mode() else None,
+        )
         truncated = (
             f"[truncated {len(content)} chars, full output: {url}]\n\n"
             + content[: self._preview_length]
@@ -126,7 +154,10 @@ class OutputStore:
         bucket[output_id] = path
         self._evict(bucket)
 
-        return _make_url(project_id, output_id, ".json")
+        return _make_url(
+            project_id, output_id, ".json",
+            abs_path=path if _is_local_mode() else None,
+        )
 
     def _truncate_strings(self, data: Any, url: str) -> Any:
         """Phase 1: recursively shorten strings longer than preview_length."""

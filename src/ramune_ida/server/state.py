@@ -46,9 +46,10 @@ class AppState:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        base = self.config.resolved_work_base_dir
-        os.makedirs(base, exist_ok=True)
-        self._recover_projects(base)
+        if not self.config.local_mode:
+            base = self.config.resolved_work_base_dir
+            os.makedirs(base, exist_ok=True)
+            self._recover_projects(base)
         if self.config.auto_save_interval > 0:
             self._auto_save_task = asyncio.create_task(
                 self._auto_save_loop(), name="auto-save"
@@ -144,10 +145,17 @@ class AppState:
             if project_id in self.projects:
                 return self.projects[project_id], False
 
-            work_dir = os.path.join(
-                self.config.resolved_work_base_dir, project_id
-            )
-            os.makedirs(work_dir, exist_ok=True)
+            if self.config.local_mode:
+                work_dir = os.getcwd()
+                outputs_dir: str | None = os.path.join(
+                    work_dir, ".ramune-outputs", project_id
+                )
+            else:
+                work_dir = os.path.join(
+                    self.config.resolved_work_base_dir, project_id
+                )
+                os.makedirs(work_dir, exist_ok=True)
+                outputs_dir = None
 
             project = Project(
                 project_id=project_id,
@@ -155,6 +163,7 @@ class AppState:
                 limiter=self.limiter,
                 worker_python=self.config.worker_python,
                 plugin_dir=self.config.resolved_plugin_dir,
+                outputs_dir=outputs_dir,
             )
             self.projects[project_id] = project
             log.info("Opened project %s", project_id)
@@ -181,8 +190,13 @@ class AppState:
             self.projects.pop(project_id, None)
             self.output_store.discard_project(project_id)
 
-            if os.path.isdir(project.work_dir):
-                shutil.rmtree(project.work_dir, ignore_errors=True)
+            if self.config.local_mode:
+                # Never remove the user's cwd; only wipe our scoped outputs.
+                if os.path.isdir(project.outputs_dir):
+                    shutil.rmtree(project.outputs_dir, ignore_errors=True)
+            else:
+                if os.path.isdir(project.work_dir):
+                    shutil.rmtree(project.work_dir, ignore_errors=True)
 
             log.info("Closed project %s", project_id)
 

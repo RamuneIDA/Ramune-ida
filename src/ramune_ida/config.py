@@ -21,6 +21,7 @@ class ServerConfig(BaseModel):
     output_max_per_project: int = 100
     plugins_enabled: bool = True
     exclude_tags: tuple[str, ...] = ()
+    local_mode: bool = False
 
     @property
     def resolved_data_dir(self) -> str:

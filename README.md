@@ -103,6 +103,51 @@ uv run ramune-ida --worker-python /opt/ida/python3
 
 # SSE transport (legacy MCP clients)
 uv run ramune-ida sse://127.0.0.1:9000
+
+# Stdio transport (MCP over stdin/stdout, no network listener)
+uv run ramune-ida stdio://
+
+# Local mode (see "Local mode" below)
+uv run ramune-ida --local stdio://
+```
+
+## Local Mode
+
+By default Ramune-ida treats each project as its own workspace under
+`<data-dir>/projects/<project_id>/` and exposes HTTP endpoints so clients
+can upload binaries / download truncated outputs. This works well in
+containerised deployments but is awkward for direct local use on your
+own machine.
+
+`--local` switches to a simpler on-disk layout:
+
+- All projects use the **server cwd** as their `work_dir` — no hidden
+  per-project directory is created.
+- `open_database` accepts absolute paths or paths relative to cwd; you
+  do not need to upload anything first.
+- The `POST /files/...` and `GET /files/...` HTTP endpoints are
+  **disabled** (return 404).
+- Truncated tool outputs are written to
+  `<cwd>/.ramune-outputs/<project_id>/` and referenced by **absolute
+  filesystem path** so clients can read them directly without HTTP.
+- `close_project` **never** deletes the cwd; it only wipes that
+  project's `.ramune-outputs/<project_id>/` subdirectory.
+- Web UI (`--web`) is force-disabled — the Web UI would otherwise
+  enumerate the entire cwd.
+
+Typical configuration for a stdio-based MCP client (Claude Desktop /
+Cursor / Codex CLI):
+
+```json
+{
+  "mcpServers": {
+    "ramune-ida": {
+      "command": "uv",
+      "args": ["run", "ramune-ida", "--local", "stdio://"],
+      "cwd": "/path/to/your/reversing/workspace"
+    }
+  }
+}
 ```
 
 ### MCP Client Configuration
@@ -182,7 +227,8 @@ All data is stored under a single data directory (default `~/.ramune-ida`, confi
 | `--auto-save-interval` | `300` | Seconds between auto-saves (0 = disabled) |
 | `--output-max-length` | `20000` | Truncate tool output beyond this many chars |
 | `--exclude-tags` | — | Comma-separated tags to exclude from MCP (supports `::*` globs) |
-| `--web` | off | Enable Web UI on the same port |
+| `--web` | off | Enable Web UI on the same port (ignored under `--local` or `stdio://`) |
+| `--local` | off | Local mode: projects use cwd; disable `/files` endpoints and Web UI; outputs referenced by absolute path |
 
 ## Building
 

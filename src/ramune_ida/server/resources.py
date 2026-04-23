@@ -86,6 +86,8 @@ def project_status(project_id: str) -> str:
 )
 def project_files(project_id: str) -> str:
     state = get_state()
+    if state.config.local_mode:
+        return json.dumps({"error": "File listing is not available."})
     project = state.projects.get(project_id)
     if project is None:
         return json.dumps({"error": f"Unknown project: {project_id}"})
@@ -126,6 +128,7 @@ def project_outputs(project_id: str) -> str:
     if project_id not in state.projects:
         return json.dumps({"error": f"Unknown project: {project_id}"})
 
+    local_mode = state.config.local_mode
     raw = state.output_store.list_outputs(project_id)
     outputs = []
     for oid, path in raw.items():
@@ -134,10 +137,15 @@ def project_outputs(project_id: str) -> str:
             size = os.path.getsize(path)
         except OSError:
             pass
+        if local_mode:
+            url = path
+        else:
+            ext = os.path.splitext(path)[1] or ".txt"
+            url = f"/files/{project_id}/outputs/{oid}{ext}"
         outputs.append({
             "output_id": oid,
             "size": size,
-            "download_url": f"/files/{project_id}/outputs/{oid}.txt",
+            "download_url": url,
         })
 
     return json.dumps({
