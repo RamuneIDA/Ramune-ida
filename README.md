@@ -178,6 +178,22 @@ For Claude Desktop or Cursor, add to your MCP config:
 8. close_project(project_id)               → clean up
 ```
 
+## Project Isolation via `Authorization` Header (Experimental, Provisional)
+
+> **This is a provisional, hacky implementation. The interface, on-disk format, and overall approach may change or be replaced at any time without notice.** It exists today only because we needed *some* basic isolation for shared deployments; do not depend on it.
+
+When the server runs over HTTP, every inbound request's `Authorization` header is captured. If a request carries one, the server enforces a tiny per-project ACL:
+
+- `open_project` writes the caller's auth string into `<work_dir>/.auth` for any newly created project.
+- Any subsequent tool call (or `open_project` reuse) targeting that `project_id` from a *different* auth is rejected with `project_id '<id>' is already in use`.
+- The `projects` tool only lists projects owned by the current auth, plus any unowned legacy projects.
+- Requests **without** an `Authorization` header are trusted and see/use everything (legacy behaviour).
+- `--local` and `stdio://` modes have no HTTP header and therefore skip the entire ACL.
+
+There is no token validation, no user model, no key file — the auth string is treated as an opaque namespace identifier. If you need real authentication / OAuth, terminate it at a reverse proxy (e.g. nginx) in front of Ramune-ida.
+
+The HTTP file endpoints (`POST /files/...`, `GET /files/...`) intentionally do **not** check this ACL — anyone holding the URL can read or write the file. Treat upload/download URLs returned by `open_project` as capability tokens.
+
 ## Web UI (Experimental)
 
 <img src="docs/web-ui-demo.gif" width="800" />

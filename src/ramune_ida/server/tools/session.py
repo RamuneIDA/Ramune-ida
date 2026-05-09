@@ -13,7 +13,13 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from ramune_ida.commands import CloseDatabase, PluginInvocation, Ping
-from ramune_ida.server.app import get_state, request_base_url
+from ramune_ida.server.app import (
+    get_state,
+    read_project_auth,
+    request_auth,
+    request_base_url,
+    write_project_auth,
+)
 
 
 def _rel(path: str | None, work_dir: str) -> str | None:
@@ -35,6 +41,16 @@ async def open_project(
     state = get_state()
     project, created = await state.open_project(project_id)
     pid = project.project_id
+
+    # Stamp the new project's work_dir with the caller's auth so subsequent
+    # requests from other auths get rejected by the ACL wrapper.  Reuse paths
+    # (created=False) intentionally do not re-stamp: ownership is decided at
+    # creation time and never silently changes hands afterwards.
+    if created:
+        auth = request_auth.get()
+        if auth:
+            write_project_auth(pid, auth)
+
     result: dict[str, Any] = {"project_id": pid}
     if not created:
         result["notice"] = (
@@ -60,8 +76,15 @@ async def close_project(
 
 async def projects() -> dict:
     state = get_state()
+    auth = request_auth.get()
     result = []
     for pid, project in state.projects.items():
+        if auth:
+            owner = read_project_auth(pid)
+            # Hide projects owned by a different auth.  Unowned projects
+            # remain visible (legacy / pre-auth artefacts).
+            if owner is not None and owner != auth:
+                continue
         entry: dict[str, Any] = {
             "project_id": pid,
             "exe_path": _rel(project.exe_path, project.work_dir),

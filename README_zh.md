@@ -171,6 +171,22 @@ Claude Desktop 或 Cursor 中添加：
 8. close_project(project_id)               → 清理
 ```
 
+## 基于 `Authorization` 头的项目隔离（实验性 / 临时实现）
+
+> **这是一个临时的、hack 性质的实现。接口、磁盘格式和整体思路可能在任何时候被修改或替换，恕不另行通知。** 仅为了在共享部署场景下提供最低限度的隔离而存在，请勿依赖。
+
+当服务器以 HTTP 模式运行时，每个入站请求的 `Authorization` 头都会被捕获。请求若带有该头，服务器会执行一个非常小的 per-project ACL：
+
+- `open_project` 会把调用者的 auth 字符串写入新建项目的 `<work_dir>/.auth`。
+- 之后来自 *不同* auth 的任何针对该 `project_id` 的工具调用（包括 `open_project` 复用）都会被拒绝，返回 `project_id '<id>' is already in use`。
+- `projects` 工具只列出当前 auth 拥有的项目，以及没有归属的（legacy）项目。
+- **不带** `Authorization` 头的请求视为受信任，能看到/操作所有项目（旧行为）。
+- `--local` 和 `stdio://` 模式没有 HTTP header，整个 ACL 直接跳过。
+
+不做 token 校验、没有用户模型、没有 key 文件 —— auth 字符串纯粹被当作一个不透明的命名空间标识。如果需要真正的鉴权 / OAuth，请在 Ramune-ida 前部署反向代理（如 nginx）来处理。
+
+HTTP 文件端点（`POST /files/...`、`GET /files/...`）**故意**不做这层 ACL —— 拿到 URL 的任何人都能读写文件。请把 `open_project` 返回的上传/下载 URL 视为能力凭证（capability token）来妥善保管。
+
 ## Web UI（实验性）
 
 <img src="docs/web-ui-demo.gif" width="800" />

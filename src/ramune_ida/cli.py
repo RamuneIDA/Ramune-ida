@@ -163,24 +163,44 @@ def main() -> None:
 
     from starlette.types import ASGIApp, Receive, Scope, Send
 
-    from ramune_ida.server.app import request_base_url
+    from ramune_ida.server.app import request_auth, request_base_url
 
-    class _HostCapture:
-        """ASGI middleware that captures Host header into a ContextVar."""
+    class _RequestCapture:
+        """ASGI middleware that pins request-scoped headers into ContextVars.
+
+        Captures:
+          * ``Host`` → :data:`request_base_url`  (used to build upload/download URLs)
+          * ``Authorization`` → :data:`request_auth`  (used by the per-tool ACL
+            check; empty string when absent — i.e. trusted/legacy mode).
+        """
 
         def __init__(self, app: ASGIApp) -> None:
             self.app = app
 
         async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-            if scope["type"] == "http":
-                for k, v in scope.get("headers", []):
-                    if k == b"host":
-                        tok = request_base_url.set(f"http://{v.decode()}")
-                        try:
-                            return await self.app(scope, receive, send)
-                        finally:
-                            request_base_url.reset(tok)
-            await self.app(scope, receive, send)
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            host = b""
+            auth = b""
+            for k, v in scope.get("headers", []):
+                if k == b"host":
+                    host = v
+                elif k == b"authorization":
+                    auth = v
+
+            host_tok = (
+                request_base_url.set(f"http://{host.decode()}") if host else None
+            )
+            auth_tok = request_auth.set(auth.decode()) if auth else None
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                if auth_tok is not None:
+                    request_auth.reset(auth_tok)
+                if host_tok is not None:
+                    request_base_url.reset(host_tok)
 
     if transport == "streamable-http":
         asgi_app = mcp.streamable_http_app()
@@ -196,7 +216,7 @@ def main() -> None:
         )
 
     asyncio.run(_serve(
-        _HostCapture(asgi_app), host, port, mcp.settings.log_level.lower(),
+        _RequestCapture(asgi_app), host, port, mcp.settings.log_level.lower(),
     ))
 
 

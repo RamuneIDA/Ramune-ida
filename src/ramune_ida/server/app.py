@@ -34,6 +34,52 @@ request_base_url: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_base_url", default=""
 )
 
+# Raw value of the inbound ``Authorization`` header (whatever the client sent,
+# including the ``Bearer `` prefix if any).  Empty string when no header was
+# provided — local mode, stdio, and unauthenticated HTTP requests all fall
+# through this path and are treated as trusted (legacy behaviour).
+request_auth: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_auth", default=""
+)
+
+
+# Per-project ownership marker --------------------------------------------
+
+PROJECT_AUTH_FILE = ".auth"
+
+
+def read_project_auth(project_id: str) -> str | None:
+    """Return the owning auth string for *project_id*, or ``None`` if the
+    project is unowned (no ``.auth`` file, or running under local mode).
+
+    The marker file lives at ``<work_base>/<project_id>/.auth``.  Local mode
+    keeps every project under the server's cwd and is therefore exempt from
+    ACL checks (stdio cannot carry an Authorization header anyway).
+    """
+    if _config is None or _config.local_mode:
+        return None
+    path = os.path.join(_config.resolved_work_base_dir, project_id, PROJECT_AUTH_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    return content or None
+
+
+def write_project_auth(project_id: str, auth: str) -> None:
+    """Persist *auth* as the owner of *project_id*.
+
+    Caller is responsible for ensuring the project's ``work_dir`` exists.
+    """
+    if _config is None or _config.local_mode or not auth:
+        return
+    path = os.path.join(_config.resolved_work_base_dir, project_id, PROJECT_AUTH_FILE)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(auth)
+
 
 def configure(config: ServerConfig) -> None:
     """Set the configuration before ``mcp.run()``.
@@ -218,6 +264,17 @@ def register_tool(*deco_args: Any, **deco_kwargs: Any) -> Any:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            auth = request_auth.get()
+            pid_arg = kwargs.get("project_id")
+            if auth and isinstance(pid_arg, str):
+                owner = read_project_auth(pid_arg)
+                if owner is not None and owner != auth:
+                    raise ValueError(
+                        f"project_id '{pid_arg}' is already in use; "
+                        f"choose a different one or omit it to let the "
+                        f"server generate a new one."
+                    )
+
             result = await fn(*args, **kwargs)
             try:
                 state = get_state()
